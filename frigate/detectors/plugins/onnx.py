@@ -89,7 +89,10 @@ class ONNXDetector(DetectionApi):
                     x_max / self.width,
                 ]
             return detections
-        elif self.onnx_model_type == ModelTypeEnum.yologeneric:
+        elif self.onnx_model_type in (
+            ModelTypeEnum.yologeneric,
+            ModelTypeEnum.yolo26,
+        ):
             return post_process_yolo(tensor_output, self.width, self.height)
         elif self.onnx_model_type == ModelTypeEnum.yolox:
             return post_process_yolox(

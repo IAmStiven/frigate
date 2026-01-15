@@ -39,6 +39,7 @@ class ModelTypeEnum(str, Enum):
     dfine = "dfine"
     rfdetr = "rfdetr"
     ssd = "ssd"
+    yolo26 = "yolo26"
     yolox = "yolox"
     yolonas = "yolonas"
     yologeneric = "yolo-generic"
