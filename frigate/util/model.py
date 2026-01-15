@@ -26,7 +26,7 @@ def post_process_dfine(
     input_shape = np.array([height, width, height, width])
     boxes = np.divide(boxes, input_shape, dtype=np.float32)
     indices = cv2.dnn.NMSBoxes(boxes, scores, score_threshold=0.4, nms_threshold=0.4)
-    detections = np.zeros((20, 6), np.float32)
+    detections = np.zeros((max_detections, 6), np.float32)
 
     for i, (bbox, confidence, class_id) in enumerate(
         zip(boxes[indices], scores[indices], class_ids[indices])
@@ -230,6 +230,9 @@ def __post_process_nms_yolo_with_objectness(
     predictions: np.ndarray, width, height
 ) -> np.ndarray:
     predictions = np.squeeze(predictions)
+    score_threshold = 0.4
+    nms_threshold = 0.4
+    max_detections = 20
 
     # transpose the output so it has order (inferences, class_ids)
     if predictions.shape[0] < predictions.shape[1]:
@@ -239,7 +242,7 @@ def __post_process_nms_yolo_with_objectness(
     objectness = predictions[:, 4:5]
     scores_matrix = class_scores * objectness
     scores = np.max(scores_matrix, axis=1)
-    mask = scores > 0.4
+    mask = scores > score_threshold
 
     predictions = predictions[mask, :]
     scores = scores[mask]
@@ -255,12 +258,14 @@ def __post_process_nms_yolo_with_objectness(
     boxes = boxes_xyxy
 
     # run NMS
-    indices = cv2.dnn.NMSBoxes(boxes, scores, score_threshold=0.4, nms_threshold=0.4)
+    indices = cv2.dnn.NMSBoxes(
+        boxes, scores, score_threshold=score_threshold, nms_threshold=nms_threshold
+    )
     detections = np.zeros((20, 6), np.float32)
     for i, (bbox, confidence, class_id) in enumerate(
         zip(boxes[indices], scores[indices], class_ids[indices])
     ):
-        if i == 20:
+        if i == max_detections:
             break
 
         detections[i] = [
