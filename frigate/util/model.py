@@ -12,6 +12,10 @@ from frigate.const import MODEL_CACHE_DIR
 
 logger = logging.getLogger(__name__)
 
+YOLO_SCORE_THRESHOLD = 0.4
+YOLO_NMS_THRESHOLD = 0.4
+YOLO_MAX_DETECTIONS = 20
+
 
 ### Post Processing
 
@@ -230,9 +234,9 @@ def __post_process_nms_yolo_with_objectness(
     predictions: np.ndarray, width, height
 ) -> np.ndarray:
     predictions = np.squeeze(predictions)
-    score_threshold = 0.4
-    nms_threshold = 0.4
-    max_detections = 20
+    score_threshold = YOLO_SCORE_THRESHOLD
+    nms_threshold = YOLO_NMS_THRESHOLD
+    max_detections = YOLO_MAX_DETECTIONS
 
     # transpose the output so it has order (inferences, class_ids)
     if predictions.shape[0] < predictions.shape[1]:
@@ -265,7 +269,7 @@ def __post_process_nms_yolo_with_objectness(
     for i, (bbox, confidence, class_id) in enumerate(
         zip(boxes[indices], scores[indices], class_ids[indices])
     ):
-        if i == max_detections:
+        if i >= max_detections:
             break
 
         detections[i] = [
