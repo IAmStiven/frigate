@@ -226,11 +226,68 @@ def __post_process_nms_yolo(predictions: np.ndarray, width, height) -> np.ndarra
     return detections
 
 
+def __post_process_nms_yolo_with_objectness(
+    predictions: np.ndarray, width, height
+) -> np.ndarray:
+    predictions = np.squeeze(predictions)
+
+    # transpose the output so it has order (inferences, class_ids)
+    if predictions.shape[0] < predictions.shape[1]:
+        predictions = predictions.T
+
+    class_scores = predictions[:, 5:]
+    objectness = predictions[:, 4:5]
+    scores_matrix = class_scores * objectness
+    scores = np.max(scores_matrix, axis=1)
+    mask = scores > 0.4
+
+    predictions = predictions[mask, :]
+    scores = scores[mask]
+    class_ids = np.argmax(scores_matrix, axis=1)[mask]
+
+    # Rescale box
+    boxes = predictions[:, :4]
+    boxes_xyxy = np.ones_like(boxes)
+    boxes_xyxy[:, 0] = boxes[:, 0] - boxes[:, 2] / 2
+    boxes_xyxy[:, 1] = boxes[:, 1] - boxes[:, 3] / 2
+    boxes_xyxy[:, 2] = boxes[:, 0] + boxes[:, 2] / 2
+    boxes_xyxy[:, 3] = boxes[:, 1] + boxes[:, 3] / 2
+    boxes = boxes_xyxy
+
+    # run NMS
+    indices = cv2.dnn.NMSBoxes(boxes, scores, score_threshold=0.4, nms_threshold=0.4)
+    detections = np.zeros((20, 6), np.float32)
+    for i, (bbox, confidence, class_id) in enumerate(
+        zip(boxes[indices], scores[indices], class_ids[indices])
+    ):
+        if i == 20:
+            break
+
+        detections[i] = [
+            class_id,
+            confidence,
+            bbox[1] / height,
+            bbox[0] / width,
+            bbox[3] / height,
+            bbox[2] / width,
+        ]
+
+    return detections
+
+
 def post_process_yolo(output: list[np.ndarray], width: int, height: int) -> np.ndarray:
     if len(output) > 1:
         return __post_process_multipart_yolo(output, width, height)
     else:
         return __post_process_nms_yolo(output[0], width, height)
+
+
+def post_process_yolo26(
+    output: list[np.ndarray], width: int, height: int
+) -> np.ndarray:
+    if len(output) > 1:
+        return __post_process_multipart_yolo(output, width, height)
+    return __post_process_nms_yolo_with_objectness(output[0], width, height)
 
 
 def post_process_yolox(
