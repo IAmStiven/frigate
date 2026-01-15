@@ -26,7 +26,7 @@ def post_process_dfine(
     input_shape = np.array([height, width, height, width])
     boxes = np.divide(boxes, input_shape, dtype=np.float32)
     indices = cv2.dnn.NMSBoxes(boxes, scores, score_threshold=0.4, nms_threshold=0.4)
-    detections = np.zeros((max_detections, 6), np.float32)
+    detections = np.zeros((20, 6), np.float32)
 
     for i, (bbox, confidence, class_id) in enumerate(
         zip(boxes[indices], scores[indices], class_ids[indices])
@@ -261,7 +261,7 @@ def __post_process_nms_yolo_with_objectness(
     indices = cv2.dnn.NMSBoxes(
         boxes, scores, score_threshold=score_threshold, nms_threshold=nms_threshold
     )
-    detections = np.zeros((20, 6), np.float32)
+    detections = np.zeros((max_detections, 6), np.float32)
     for i, (bbox, confidence, class_id) in enumerate(
         zip(boxes[indices], scores[indices], class_ids[indices])
     ):
