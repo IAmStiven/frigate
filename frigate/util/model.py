@@ -80,7 +80,7 @@ def post_process_rfdetr(tensor_output: list[np.ndarray, np.ndarray]) -> np.ndarr
     indices = cv2.dnn.NMSBoxes(
         filtered_boxes, filtered_scores, score_threshold=0.4, nms_threshold=0.4
     )
-    detections = np.zeros((max_detections, 6), np.float32)
+    detections = np.zeros((20, 6), np.float32)
 
     for i, (bbox, confidence, class_id) in enumerate(
         zip(filtered_boxes[indices], filtered_scores[indices], filtered_labels[indices])
