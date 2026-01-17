@@ -233,6 +233,55 @@ def post_process_yolo(output: list[np.ndarray], width: int, height: int) -> np.n
         return __post_process_nms_yolo(output[0], width, height)
 
 
+def post_process_yolo26(output: list[np.ndarray], width: int, height: int) -> np.ndarray:
+    predictions = output[0]
+    while predictions.ndim > 2:
+        predictions = predictions[0]
+
+    detections = np.zeros((20, 6), np.float32)
+    if predictions.size == 0:
+        return detections
+
+    if predictions.shape[-1] == 7:
+        boxes = predictions[:, 1:5]
+        scores = predictions[:, 5]
+        class_ids = predictions[:, 6]
+    elif predictions.shape[-1] == 6:
+        boxes = predictions[:, :4]
+        scores = predictions[:, 4]
+        class_ids = predictions[:, 5]
+    else:
+        scores = np.max(predictions[:, 4:], axis=1)
+        class_ids = np.argmax(predictions[:, 4:], axis=1)
+        boxes = predictions[:, :4]
+        boxes_xyxy = np.zeros_like(boxes)
+        boxes_xyxy[:, 0] = boxes[:, 0] - boxes[:, 2] / 2
+        boxes_xyxy[:, 1] = boxes[:, 1] - boxes[:, 3] / 2
+        boxes_xyxy[:, 2] = boxes[:, 0] + boxes[:, 2] / 2
+        boxes_xyxy[:, 3] = boxes[:, 1] + boxes[:, 3] / 2
+        boxes = boxes_xyxy
+
+    keep = scores > 0.4
+    boxes = boxes[keep]
+    scores = scores[keep]
+    class_ids = class_ids[keep]
+
+    for i, (bbox, confidence, class_id) in enumerate(zip(boxes, scores, class_ids)):
+        if i == 20:
+            break
+
+        detections[i] = [
+            class_id,
+            confidence,
+            bbox[1] / height,
+            bbox[0] / width,
+            bbox[3] / height,
+            bbox[2] / width,
+        ]
+
+    return detections
+
+
 def post_process_yolox(
     predictions: np.ndarray,
     width: int,
