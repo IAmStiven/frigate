@@ -1,7 +1,9 @@
 {
   "documentTitle": "Classification Models - Frigate",
   "details": {
-    "scoreInfo": "Score represents the average classification confidence across all detections of this object."
+    "scoreInfo": "Score represents the average classification confidence across all detections of this object.",
+    "none": "None",
+    "unknown": "Unknown"
   },
   "button": {
     "deleteClassificationAttempts": "Delete Classification Images",
@@ -72,7 +74,7 @@
   },
   "renameCategory": {
     "title": "Rename Class",
-    "desc": "Enter a new name for {{name}}. You will be required to retrain the model for the name change to take affect."
+    "desc": "Enter a new name for {{name}}. You will be required to retrain the model for the name change to take effect."
   },
   "description": {
     "invalidName": "Invalid name. Names can only include letters, numbers, spaces, apostrophes, underscores, and hyphens."
@@ -83,7 +85,6 @@
     "aria": "Select Recent Classifications"
   },
   "categories": "Classes",
-  "none": "None",
   "createCategory": {
     "new": "Create New Class"
   },
@@ -138,6 +139,7 @@
         "nameOnlyNumbers": "Model name cannot contain only numbers",
         "classRequired": "At least 1 class is required",
         "classesUnique": "Class names must be unique",
+        "noneNotAllowed": "The class 'none' is not allowed",
         "stateRequiresTwoClasses": "State models require at least 2 classes",
         "objectLabelRequired": "Please select an object label",
         "objectTypeRequired": "Please select a classification type"

@@ -333,192 +333,33 @@ function Exports() {
   );
 }
 
-type AllExportsViewProps = {
-  contentRef: MutableRefObject<HTMLDivElement | null>;
-  search: string;
-  cases?: ExportCase[];
-  exports: Export[];
-  exportsByCase: { [caseId: string]: Export[] };
-  setSelectedCaseId: (id: string) => void;
-  setSelected: (e: Export) => void;
-  renameClip: (id: string, update: string) => void;
-  setDeleteClip: (d: DeleteClipType | undefined) => void;
-  onAssignToCase: (e: Export) => void;
-};
-function AllExportsView({
-  contentRef,
-  search,
-  cases,
-  exports,
-  exportsByCase,
-  setSelectedCaseId,
-  setSelected,
-  renameClip,
-  setDeleteClip,
-  onAssignToCase,
-}: AllExportsViewProps) {
-  const { t } = useTranslation(["views/exports"]);
-
-  // Filter
-
-  const filteredCases = useMemo(() => {
-    if (!search || !cases) {
-      return cases || [];
-    }
-
-    return cases.filter(
-      (caseItem) =>
-        caseItem.name.toLowerCase().includes(search.toLowerCase()) ||
-        (caseItem.description &&
-          caseItem.description.toLowerCase().includes(search.toLowerCase())),
-    );
-  }, [search, cases]);
-
-  const filteredExports = useMemo<Export[]>(() => {
-    if (!search) {
-      return exports;
-    }
-
-    return exports.filter((exp) =>
-      exp.name
-        .toLowerCase()
-        .replaceAll("_", " ")
-        .includes(search.toLowerCase()),
-    );
-  }, [exports, search]);
-
-  return (
-    <div className="w-full overflow-hidden">
-      {filteredCases?.length || filteredExports.length ? (
-        <div
-          ref={contentRef}
-          className="scrollbar-container flex size-full flex-col gap-4 overflow-y-auto"
-        >
-          {filteredCases.length > 0 && (
-            <div className="space-y-2">
-              <Heading as="h4">{t("headings.cases")}</Heading>
-              <div className="grid gap-2 sm:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4">
-                {cases?.map((item) => (
-                  <CaseCard
-                    key={item.name}
-                    className={
-                      search == "" || filteredCases?.includes(item)
-                        ? ""
-                        : "hidden"
-                    }
-                    exportCase={item}
-                    exports={exportsByCase[item.id] || []}
-                    onSelect={() => {
-                      setSelectedCaseId(item.id);
-                    }}
-                  />
-                ))}
-              </div>
-            </div>
-          )}
-
-          {filteredExports.length > 0 && (
-            <div className="space-y-4">
-              <Heading as="h4">{t("headings.uncategorizedExports")}</Heading>
-              <div
-                ref={contentRef}
-                className="scrollbar-container grid gap-2 overflow-y-auto sm:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4"
-              >
-                {exports.map((item) => (
-                  <ExportCard
-                    key={item.name}
-                    className={
-                      search == "" || filteredExports.includes(item)
-                        ? ""
-                        : "hidden"
-                    }
-                    exportedRecording={item}
-                    onSelect={setSelected}
-                    onRename={renameClip}
-                    onDelete={({ file, exportName }) =>
-                      setDeleteClip({ file, exportName })
-                    }
-                    onAssignToCase={onAssignToCase}
-                  />
-                ))}
-              </div>
-            </div>
-          )}
-        </div>
-      ) : (
-        <div className="absolute left-1/2 top-1/2 flex -translate-x-1/2 -translate-y-1/2 flex-col items-center justify-center text-center">
-          <LuFolderX className="size-16" />
-          {t("noExports")}
-        </div>
-      )}
-    </div>
-  );
-}
-
-type CaseViewProps = {
-  contentRef: MutableRefObject<HTMLDivElement | null>;
-  selectedCase: ExportCase;
-  exports?: Export[];
-  search: string;
-  setSelected: (e: Export) => void;
-  renameClip: (id: string, update: string) => void;
-  setDeleteClip: (d: DeleteClipType | undefined) => void;
-  onAssignToCase: (e: Export) => void;
-};
-function CaseView({
-  contentRef,
-  selectedCase,
-  exports,
-  search,
-  setSelected,
-  renameClip,
-  setDeleteClip,
-  onAssignToCase,
-}: CaseViewProps) {
-  const filteredExports = useMemo<Export[]>(() => {
-    const caseExports = (exports || []).filter(
-      (e) => e.export_case == selectedCase.id,
-    );
-
-    if (!search) {
-      return caseExports;
-    }
-
-    return caseExports.filter((exp) =>
-      exp.name
-        .toLowerCase()
-        .replaceAll("_", " ")
-        .includes(search.toLowerCase()),
-    );
-  }, [selectedCase, exports, search]);
-
-  return (
-    <div className="flex size-full flex-col gap-8 overflow-hidden">
-      <div className="flex shrink-0 flex-col gap-1">
-        <Heading className="capitalize" as="h2">
-          {selectedCase.name}
-        </Heading>
-        <div className="text-secondary-foreground">
-          {selectedCase.description}
-        </div>
-      </div>
-      <div
-        ref={contentRef}
-        className="scrollbar-container grid min-h-0 flex-1 content-start gap-2 overflow-y-auto sm:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4"
-      >
-        {exports?.map((item) => (
-          <ExportCard
-            key={item.name}
-            className={filteredExports.includes(item) ? "" : "hidden"}
-            exportedRecording={item}
-            onSelect={setSelected}
-            onRename={renameClip}
-            onDelete={({ file, exportName }) =>
-              setDeleteClip({ file, exportName })
-            }
-            onAssignToCase={onAssignToCase}
-          />
-        ))}
+      <div className="w-full overflow-hidden">
+        {exports && filteredExports && filteredExports.length > 0 ? (
+          <div
+            ref={contentRef}
+            className="scrollbar-container grid size-full gap-2 overflow-y-auto sm:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4"
+          >
+            {Object.values(exports).map((item) => (
+              <ExportCard
+                key={item.name}
+                className={
+                  search == "" || filteredExports.includes(item) ? "" : "hidden"
+                }
+                exportedRecording={item}
+                onSelect={setSelected}
+                onRename={onHandleRename}
+                onDelete={({ file, exportName }) =>
+                  setDeleteClip({ file, exportName })
+                }
+              />
+            ))}
+          </div>
+        ) : exports !== undefined ? (
+          <div className="absolute left-1/2 top-1/2 flex -translate-x-1/2 -translate-y-1/2 flex-col items-center justify-center text-center">
+            <LuFolderX className="size-16" />
+            {t("noExports")}
+          </div>
+        ) : null}
       </div>
     </div>
   );

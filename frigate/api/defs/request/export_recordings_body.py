@@ -16,7 +16,7 @@ class ExportRecordingsBody(BaseModel):
     source: PlaybackSourceEnum = Field(
         default=PlaybackSourceEnum.recordings, title="Playback source"
     )
-    name: str = Field(title="Friendly name", default=None, max_length=256)
+    name: Optional[str] = Field(title="Friendly name", default=None, max_length=256)
     image_path: Union[str, SkipJsonSchema[None]] = None
     export_case_id: Optional[str] = Field(
         default=None,

@@ -62,6 +62,7 @@ import useApiFilter from "@/hooks/use-api-filter";
 import {
   ClassificationDatasetResponse,
   ClassificationItemData,
+  ClassifiedEvent,
   TrainFilter,
 } from "@/types/classification";
 import {
@@ -87,7 +88,7 @@ export default function ModelTrainingView({ model }: ModelTrainingViewProps) {
   // title
 
   useEffect(() => {
-    document.title = `${model.name} - ${t("documentTitle")}`;
+    document.title = `${model.name.toUpperCase()} - ${t("documentTitle")}`;
   }, [model.name, t]);
 
   // model state
@@ -707,7 +708,7 @@ function LibrarySelector({
                 className="flex-grow cursor-pointer capitalize"
                 onClick={() => setPageToggle(id)}
               >
-                {id === "none" ? t("none") : id.replaceAll("_", " ")}
+                {id === "none" ? t("details.none") : id.replaceAll("_", " ")}
                 <span className="ml-2 text-muted-foreground">
                   ({dataset?.[id].length})
                 </span>
@@ -803,6 +804,7 @@ function DatasetGrid({
               name: "",
             }}
             showArea={false}
+            clickable={selectedImages.length > 0}
             selected={selectedImages.includes(image)}
             i18nLibrary="views/classificationModel"
             onClick={(data, _) => onClickImages([data.filename], true)}
@@ -866,6 +868,12 @@ function TrainGrid({
           };
         })
         .filter((data) => {
+          // Ignore images that don't match the expected format (event-camera-timestamp-state-score.webp)
+          // Expected format has 5 parts when split by "-", and score should be a valid number
+          if (data.score === undefined || isNaN(data.score) || !data.name) {
+            return false;
+          }
+
           if (!trainFilter) {
             return true;
           }
@@ -955,6 +963,7 @@ function StateTrainGrid({
             data={data}
             threshold={threshold}
             selected={selectedImages.includes(data.filename)}
+            clickable={selectedImages.length > 0}
             i18nLibrary="views/classificationModel"
             showArea={false}
             onClick={(data, meta) => onClickImages([data.filename], meta)}
@@ -1027,6 +1036,33 @@ function ObjectTrainGrid({
     };
   }, [model]);
 
+  // Helper function to create ClassifiedEvent from Event
+  const createClassifiedEvent = useCallback(
+    (event: Event | undefined): ClassifiedEvent | undefined => {
+      if (!event || !model.object_config) {
+        return undefined;
+      }
+
+      let label: string | undefined = undefined;
+      let score: number | undefined = undefined;
+
+      if (model.object_config.classification_type === "attribute") {
+        label = event.data[model.name] as string | undefined;
+        score = event.data[`${model.name}_score`] as number | undefined;
+      } else {
+        label = event.sub_label;
+        score = event.data.sub_label_score;
+      }
+
+      return {
+        id: event.id,
+        label: label,
+        score: score,
+      };
+    },
+    [model],
+  );
+
   // selection
 
   const [selectedEvent, setSelectedEvent] = useState<Event>();
@@ -1089,11 +1125,13 @@ function ObjectTrainGrid({
       >
         {Object.entries(groups).map(([key, group]) => {
           const event = events?.find((ev) => ev.id == key);
+          const classifiedEvent = createClassifiedEvent(event);
+
           return (
             <div key={key} className="aspect-square w-full">
               <GroupedClassificationCard
                 group={group}
-                event={event}
+                classifiedEvent={classifiedEvent}
                 threshold={threshold}
                 selectedItems={selectedImages}
                 i18nLibrary="views/classificationModel"

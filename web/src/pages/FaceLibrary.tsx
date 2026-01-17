@@ -68,7 +68,10 @@ import {
   ClassificationCard,
   GroupedClassificationCard,
 } from "@/components/card/ClassificationCard";
-import { ClassificationItemData } from "@/types/classification";
+import {
+  ClassificationItemData,
+  ClassifiedEvent,
+} from "@/types/classification";
 
 export default function FaceLibrary() {
   const { t } = useTranslation(["views/faceLibrary"]);
@@ -922,10 +925,22 @@ function FaceAttemptGroup({
     [onRefresh, t],
   );
 
+  const classifiedEvent: ClassifiedEvent | undefined = useMemo(() => {
+    if (!event) {
+      return undefined;
+    }
+
+    return {
+      id: event.id,
+      label: event.sub_label,
+      score: event.data?.sub_label_score,
+    };
+  }, [event]);
+
   return (
     <GroupedClassificationCard
       group={group}
-      event={event}
+      classifiedEvent={classifiedEvent}
       threshold={threshold}
       selectedItems={selectedFaces}
       i18nLibrary="views/faceLibrary"
@@ -1011,6 +1026,7 @@ function FaceGrid({
               filepath: `clips/faces/${pageToggle}/${image}`,
             }}
             selected={selectedFaces.includes(image)}
+            clickable={selectedFaces.length > 0}
             i18nLibrary="views/faceLibrary"
             onClick={(data, meta) => onClickFaces([data.filename], meta)}
           >

@@ -16,12 +16,13 @@ Review summaries provide structured JSON responses that are saved for each revie
 ```
 - `title` (string): A concise, direct title that describes the purpose or overall action (e.g., "Person taking out trash", "Joe walking dog").
 - `scene` (string): A narrative description of what happens across the sequence from start to finish, including setting, detected objects, and their observable actions.
+- `shortSummary` (string): A brief 2-sentence summary of the scene, suitable for notifications. This is a condensed version of the scene description.
 - `confidence` (float): 0-1 confidence in the analysis. Higher confidence when objects/actions are clearly visible and context is unambiguous.
 - `other_concerns` (list): List of user-defined concerns that may need additional investigation.
 - `potential_threat_level` (integer): 0, 1, or 2 as defined below.
 ```
 
-This will show in multiple places in the UI to give additional context about each activity, and allow viewing more details when extra attention is required. Frigate's built in notifications will also automatically show the title and description when the data is available.
+This will show in multiple places in the UI to give additional context about each activity, and allow viewing more details when extra attention is required. Frigate's built in notifications will automatically show the title and `shortSummary` when the data is available, while the full `scene` description is available in the UI for detailed review.
 
 ### Defining Typical Activity
 
@@ -30,40 +31,43 @@ Each installation and even camera can have different parameters for what is cons
 <details>
   <summary>Default Activity Context Prompt</summary>
 
-```
-### Normal Activity Indicators (Level 0)
-- Known/verified people in any zone at any time
-- People with pets in residential areas
-- Deliveries or services during daytime/evening (6 AM - 10 PM): carrying packages to doors/porches, placing items, leaving
-- Services/maintenance workers with visible tools, uniforms, or service vehicles during daytime
-- Activity confined to public areas only (sidewalks, streets) without entering property at any time
+```yaml
+review:
+  genai:
+    activity_context_prompt: |
+      ### Normal Activity Indicators (Level 0)
+      - Known/verified people in any zone at any time
+      - People with pets in residential areas
+      - Deliveries or services during daytime/evening (6 AM - 10 PM): carrying packages to doors/porches, placing items, leaving
+      - Services/maintenance workers with visible tools, uniforms, or service vehicles during daytime
+      - Activity confined to public areas only (sidewalks, streets) without entering property at any time
 
-### Suspicious Activity Indicators (Level 1)
-- **Testing or attempting to open doors/windows/handles on vehicles or buildings** — ALWAYS Level 1 regardless of time or duration
-- **Unidentified person in private areas (driveways, near vehicles/buildings) during late night/early morning (11 PM - 5 AM)** — ALWAYS Level 1 regardless of activity or duration
-- Taking items that don't belong to them (packages, objects from porches/driveways)
-- Climbing or jumping fences/barriers to access property
-- Attempting to conceal actions or items from view
-- Prolonged loitering: remaining in same area without visible purpose throughout most of the sequence
+      ### Suspicious Activity Indicators (Level 1)
+      - **Testing or attempting to open doors/windows/handles on vehicles or buildings** — ALWAYS Level 1 regardless of time or duration
+      - **Unidentified person in private areas (driveways, near vehicles/buildings) during late night/early morning (11 PM - 5 AM)** — ALWAYS Level 1 regardless of activity or duration
+      - Taking items that don't belong to them (packages, objects from porches/driveways)
+      - Climbing or jumping fences/barriers to access property
+      - Attempting to conceal actions or items from view
+      - Prolonged loitering: remaining in same area without visible purpose throughout most of the sequence
 
-### Critical Threat Indicators (Level 2)
-- Holding break-in tools (crowbars, pry bars, bolt cutters)
-- Weapons visible (guns, knives, bats used aggressively)
-- Forced entry in progress
-- Physical aggression or violence
-- Active property damage or theft in progress
+      ### Critical Threat Indicators (Level 2)
+      - Holding break-in tools (crowbars, pry bars, bolt cutters)
+      - Weapons visible (guns, knives, bats used aggressively)
+      - Forced entry in progress
+      - Physical aggression or violence
+      - Active property damage or theft in progress
 
-### Assessment Guidance
-Evaluate in this order:
+      ### Assessment Guidance
+      Evaluate in this order:
 
-1. **If person is verified/known** → Level 0 regardless of time or activity
-2. **If person is unidentified:**
-   - Check time: If late night/early morning (11 PM - 5 AM) AND in private areas (driveways, near vehicles/buildings) → Level 1
-   - Check actions: If testing doors/handles, taking items, climbing → Level 1
-   - Otherwise, if daytime/evening (6 AM - 10 PM) with clear legitimate purpose (delivery, service worker) → Level 0
-3. **Escalate to Level 2 if:** Weapons, break-in tools, forced entry in progress, violence, or active property damage visible (escalates from Level 0 or 1)
+      1. **If person is verified/known** → Level 0 regardless of time or activity
+      2. **If person is unidentified:**
+        - Check time: If late night/early morning (11 PM - 5 AM) AND in private areas (driveways, near vehicles/buildings) → Level 1
+        - Check actions: If testing doors/handles, taking items, climbing → Level 1
+        - Otherwise, if daytime/evening (6 AM - 10 PM) with clear legitimate purpose (delivery, service worker) → Level 0
+      3. **Escalate to Level 2 if:** Weapons, break-in tools, forced entry in progress, violence, or active property damage visible (escalates from Level 0 or 1)
 
-The mere presence of an unidentified person in private areas during late night hours is inherently suspicious and warrants human review, regardless of what activity they appear to be doing or how brief the sequence is.
+      The mere presence of an unidentified person in private areas during late night hours is inherently suspicious and warrants human review, regardless of what activity they appear to be doing or how brief the sequence is.
 ```
 
 </details>
@@ -106,6 +110,17 @@ review:
     enabled: true
     additional_concerns:
       - animals in the garden
+```
+
+### Preferred Language
+
+By default, review summaries are generated in English. You can configure Frigate to generate summaries in your preferred language by setting the `preferred_language` option:
+
+```yaml
+review:
+  genai:
+    enabled: true
+    preferred_language: Spanish
 ```
 
 ## Review Reports

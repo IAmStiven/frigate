@@ -147,10 +147,11 @@ export default function LiveCameraView({
 
   // supported features
 
-  const [streamName, setStreamName] = useUserPersistence<string>(
-    `${camera.name}-stream`,
-    Object.values(camera.live.streams)[0],
-  );
+  const [streamName, setStreamName, streamNameLoaded] =
+    useUserPersistence<string>(
+      `${camera.name}-stream`,
+      Object.values(camera.live.streams)[0],
+    );
 
   const isRestreamed = useMemo(
     () =>
@@ -158,6 +159,19 @@ export default function LiveCameraView({
       Object.keys(config.go2rtc.streams || {}).includes(streamName ?? ""),
     [config, streamName],
   );
+
+  // validate stored stream name and reset if now invalid
+
+  useEffect(() => {
+    if (!streamNameLoaded) return;
+
+    const available = Object.values(camera.live.streams || {});
+    if (available.length === 0) return;
+
+    if (streamName != null && !available.includes(streamName)) {
+      setStreamName(available[0]);
+    }
+  }, [streamNameLoaded, camera.live.streams, streamName, setStreamName]);
 
   const { data: cameraMetadata } = useSWR<LiveStreamMetadata>(
     isRestreamed ? `go2rtc/streams/${streamName}` : null,
@@ -1430,7 +1444,7 @@ function FrigateCameraFeatures({
                         ns: "components/dialog",
                       })}
                     </div>
-                    <Popover>
+                    <Popover modal={true}>
                       <PopoverTrigger asChild>
                         <div className="cursor-pointer p-0">
                           <LuInfo className="size-4" />
@@ -1517,7 +1531,7 @@ function FrigateCameraFeatures({
                             <>
                               <LuX className="size-4 text-danger" />
                               <div>{t("stream.audio.unavailable")}</div>
-                              <Popover>
+                              <Popover modal={true}>
                                 <PopoverTrigger asChild>
                                   <div className="cursor-pointer p-0">
                                     <LuInfo className="size-4" />
@@ -1561,7 +1575,7 @@ function FrigateCameraFeatures({
                             <>
                               <LuX className="size-4 text-danger" />
                               <div>{t("stream.twoWayTalk.unavailable")}</div>
-                              <Popover>
+                              <Popover modal={true}>
                                 <PopoverTrigger asChild>
                                   <div className="cursor-pointer p-0">
                                     <LuInfo className="size-4" />

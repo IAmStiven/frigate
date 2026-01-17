@@ -10,6 +10,7 @@ from ruamel.yaml.constructor import DuplicateKeyError
 from frigate.config import BirdseyeModeEnum, FrigateConfig
 from frigate.const import MODEL_CACHE_DIR
 from frigate.detectors import DetectorTypeEnum
+from frigate.detectors.detector_config import ModelTypeEnum
 from frigate.util.builtin import deep_merge
 
 
@@ -107,6 +108,20 @@ class TestConfig(unittest.TestCase):
         assert frigate_config.detectors["cpu"].model.path == "/cpu_model.tflite"
         assert frigate_config.detectors["edgetpu"].model.path == "/edgetpu_model.tflite"
         assert frigate_config.detectors["openvino"].model.path == "/etc/hosts"
+
+    @patch("frigate.detectors.detector_config.load_labels")
+    def test_detector_model_type_yolo26(self, mock_labels):
+        mock_labels.return_value = {}
+        config = {
+            "detectors": {"onnx": {"type": "onnx"}},
+            "model": {"path": "/etc/hosts", "model_type": "yolo26"},
+        }
+
+        frigate_config = FrigateConfig(**(deep_merge(config, self.minimal)))
+
+        assert frigate_config.detectors["onnx"].type == DetectorTypeEnum.onnx
+        assert frigate_config.model.model_type == ModelTypeEnum.yolo26
+        assert frigate_config.detectors["onnx"].model.model_type == ModelTypeEnum.yolo26
 
     def test_invalid_mqtt_config(self):
         config = {
