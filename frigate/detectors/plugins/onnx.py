@@ -14,6 +14,7 @@ from frigate.util.model import (
     post_process_dfine,
     post_process_rfdetr,
     post_process_yolo,
+    post_process_yolo26,
     post_process_yolox,
 )
 
@@ -101,6 +102,8 @@ class ONNXDetector(DetectionApi):
             return detections
         elif self.onnx_model_type == ModelTypeEnum.yologeneric:
             return post_process_yolo(tensor_output, self.width, self.height)
+        elif self.onnx_model_type == ModelTypeEnum.yolo26:
+            return post_process_yolo26(tensor_output, self.width, self.height)
         elif self.onnx_model_type == ModelTypeEnum.yolox:
             return post_process_yolox(
                 tensor_output[0],

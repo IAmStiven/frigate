@@ -692,13 +692,14 @@ detectors:
 
 ### ONNX Supported Models
 
-| Model                         | Nvidia GPU | AMD GPU | Notes                                               |
-| ----------------------------- | ---------- | ------- | --------------------------------------------------- |
-| [YOLOv9](#yolo-v3-v4-v7-v9-2) | ✅         | ✅      | Supports CUDA Graphs for optimal Nvidia performance |
-| [RF-DETR](#rf-detr)           | ✅         | ❌      | Supports CUDA Graphs for optimal Nvidia performance |
-| [YOLO-NAS](#yolo-nas-1)       | ⚠️         | ⚠️      | Not supported by CUDA Graphs                        |
-| [YOLOX](#yolox-1)             | ✅         | ✅      | Supports CUDA Graphs for optimal Nvidia performance |
-| [D-FINE](#d-fine)             | ⚠️         | ❌      | Not supported by CUDA Graphs                        |
+| Model                          | Nvidia GPU | AMD GPU | Notes                                               |
+| ------------------------------ | ---------- | ------- | --------------------------------------------------- |
+| [YOLOv9](#yolo-v2-v9)           | ✅         | ✅      | Supports CUDA Graphs for optimal Nvidia performance |
+| [YOLOv2-6](#yolo-v2-v9)          | ✅         | ✅      | Uses objectness-based outputs                       |
+| [RF-DETR](#rf-detr)            | ✅         | ❌      | Supports CUDA Graphs for optimal Nvidia performance |
+| [YOLO-NAS](#yolo-nas-1)        | ⚠️         | ⚠️      | Not supported by CUDA Graphs                        |
+| [YOLOX](#yolox-1)              | ✅         | ✅      | Supports CUDA Graphs for optimal Nvidia performance |
+| [D-FINE](#d-fine)              | ⚠️         | ❌      | Not supported by CUDA Graphs                        |
 
 There is no default model provided, the following formats are supported:
 
@@ -734,9 +735,9 @@ model:
 
 </details>
 
-#### YOLO (v3, v4, v7, v9)
+#### YOLO (v2-v9)
 
-YOLOv3, YOLOv4, YOLOv7, and [YOLOv9](https://github.com/WongKinYiu/yolov9) models are supported, but not included by default.
+YOLOv2-6, YOLOv3, YOLOv4, YOLOv7, and [YOLOv9](https://github.com/WongKinYiu/yolov9) models are supported, but not included by default. YOLOv2-6 ONNX models are also supported when configured with `model_type: yolo26`.
 
 :::tip
 
@@ -761,7 +762,7 @@ detectors:
     type: onnx
 
 model:
-  model_type: yolo-generic
+  model_type: yolo-generic # use yolo26 for YOLOv2-6 ONNX models
   width: 320 # <--- should match the imgsize set during model export
   height: 320 # <--- should match the imgsize set during model export
   input_tensor: nchw
