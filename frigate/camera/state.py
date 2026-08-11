@@ -452,7 +452,7 @@ class CameraState:
                 and obj_area >= self.face_recognition_min_obj_area
                 and updated_obj.obj_data.get("sub_label") is None
             ) or (
-                obj_label in ("car", "motorcycle")
+                obj_label in ("car", "motorcycle", "vehicle")
                 and self.lpr_min_obj_area > 0
                 and obj_area >= self.lpr_min_obj_area
                 and updated_obj.obj_data.get("sub_label") is None

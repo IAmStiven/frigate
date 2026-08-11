@@ -76,6 +76,15 @@ class LicensePlateProcessingMixin:
             if "license_plate" in attributes:
                 self.lp_objects.append(obj)
 
+        if (
+            any(
+                "vehicle" in camera.objects.track
+                for camera in self.config.cameras.values()
+            )
+            and "vehicle" not in self.lp_objects
+        ):
+            self.lp_objects.append("vehicle")
+
         # Detection specific parameters
         self.min_size = 8
         self.max_size = 960
@@ -85,6 +94,17 @@ class LicensePlateProcessingMixin:
         # matching
         self.similarity_threshold = 0.8
         self.cluster_threshold = 0.85
+
+    def _apply_motion_mask(self, camera: str, frame: np.ndarray) -> None:
+        """Apply the detect-space motion mask to any frame resolution."""
+        mask = self.config.cameras[camera].motion.rasterized_mask
+        if mask.shape != frame.shape[:2]:
+            mask = cv2.resize(
+                mask,
+                (frame.shape[1], frame.shape[0]),
+                interpolation=cv2.INTER_NEAREST,
+            )
+        frame[mask == 0] = [0, 0, 0]
 
     def _detect(self, image: np.ndarray, debug_frame_id: int) -> list[np.ndarray]:
         """
@@ -1213,7 +1233,7 @@ class LicensePlateProcessingMixin:
             rgb = cv2.cvtColor(frame, cv2.COLOR_YUV2BGR_I420)
 
             # apply motion mask
-            rgb[self.config.cameras[camera].motion.rasterized_mask == 0] = [0, 0, 0]  # type: ignore[attr-defined]
+            self._apply_motion_mask(camera, rgb)
 
             if WRITE_DEBUG_IMAGES:
                 cv2.imwrite(
@@ -1319,7 +1339,7 @@ class LicensePlateProcessingMixin:
                 rgb = cv2.cvtColor(frame, cv2.COLOR_YUV2BGR_I420)
 
                 # apply motion mask
-                rgb[self.config.cameras[camera].motion.rasterized_mask == 0] = [0, 0, 0]  # type: ignore[attr-defined]
+                self._apply_motion_mask(camera, rgb)
 
                 left, top, right, bottom = car_box
                 car = rgb[top:bottom, left:right]
