@@ -25,7 +25,6 @@ from frigate.track.stationary_classifier import (
 )
 from frigate.util.image import (
     SharedMemoryFrameManager,
-    get_histogram,
     intersection_over_union,
 )
 from frigate.util.object import average_boxes, median_of_boxes
@@ -84,7 +83,8 @@ def distance(detection: np.ndarray, estimate: np.ndarray) -> float:
 
 
 def frigate_distance(detection: Detection, tracked_object: TrackedObject) -> float:
-    return distance(detection.points, tracked_object.estimate)
+    estimate_distance = distance(detection.points, tracked_object.estimate)
+    return appearance_continuity_distance(detection, tracked_object, estimate_distance)
 
 
 def histogram_distance(
@@ -110,6 +110,170 @@ def histogram_distance(
         if distance < 0.5:
             return distance
     return 1
+
+
+REID_LIMITS = {
+    "vehicle": {"max_gap": 15.0, "max_shift": 1.8, "min_correlation": 0.62},
+    "person": {"max_gap": 8.0, "max_shift": 1.25, "min_correlation": 0.58},
+    "animal": {"max_gap": 25.0, "max_shift": 1.75, "min_correlation": 0.58},
+}
+
+
+def appearance_continuity_distance(
+    detection: Detection,
+    tracked_object: TrackedObject,
+    estimate_distance: float,
+) -> float:
+    """Bridge a short detector gap when a motion estimate has drifted.
+
+    A vehicle that turns or stops can reappear beside its last real detection
+    while the Kalman estimate continues along the previous trajectory. Norfair
+    still considers that old track active, so its later ReID stage cannot join
+    the reacquired detection. Use the last observed box only when time,
+    position, label, and appearance all agree.
+    """
+    last_detection = tracked_object.last_detection
+    label = str(detection.data.get("label", detection.label or ""))
+    limits = REID_LIMITS.get(label)
+    if limits is None or last_detection.data.get("label") != label:
+        return estimate_distance
+
+    gap = float(
+        detection.data.get("frame_time", 0) - last_detection.data.get("frame_time", 0)
+    )
+    if gap <= 0 or gap > limits["max_gap"]:
+        return estimate_distance
+
+    if detection.embedding is None or last_detection.embedding is None:
+        return estimate_distance
+
+    correlation = float(
+        cv2.compareHist(
+            detection.embedding,
+            last_detection.embedding,
+            cv2.HISTCMP_CORREL,
+        )
+    )
+    if not np.isfinite(correlation) or correlation < limits["min_correlation"]:
+        return estimate_distance
+
+    last_detection_distance = distance(detection.points, last_detection.points)
+    if last_detection_distance > limits["max_shift"]:
+        return estimate_distance
+
+    continuity_distance = (
+        last_detection_distance
+        + 0.35 * (gap / limits["max_gap"])
+        + 0.25 * (1.0 - correlation)
+    )
+    return min(estimate_distance, float(continuity_distance))
+
+
+def appearance_histogram(
+    bgr_frame: np.ndarray, box: Sequence[int]
+) -> np.ndarray | None:
+    """Build a compact color descriptor while limiting background influence."""
+    frame_height, frame_width = bgr_frame.shape[:2]
+    left, top, right, bottom = [int(value) for value in box]
+    inset_x = max(1, int((right - left) * 0.05))
+    inset_y = max(1, int((bottom - top) * 0.05))
+    left = max(0, left + inset_x)
+    top = max(0, top + inset_y)
+    right = min(frame_width, right - inset_x)
+    bottom = min(frame_height, bottom - inset_y)
+    if right <= left or bottom <= top:
+        return None
+
+    crop = bgr_frame[top:bottom, left:right]
+    if max(crop.shape[:2]) > 128:
+        scale = 128.0 / max(crop.shape[:2])
+        crop = cv2.resize(
+            crop,
+            (max(1, int(crop.shape[1] * scale)), max(1, int(crop.shape[0] * scale))),
+            interpolation=cv2.INTER_AREA,
+        )
+
+    histogram = cv2.calcHist(
+        [crop], [0, 1, 2], None, [8, 8, 8], [0, 256, 0, 256, 0, 256]
+    )
+    return cv2.normalize(histogram, histogram).flatten()
+
+
+def appearance_reid_distance(
+    first_tracker: TrackedObject, second_tracker: TrackedObject
+) -> float:
+    """Compare dormant and newly initialized tracks using multiple cues.
+
+    Norfair invokes this function after ordinary motion matching fails. A match
+    must have a similar low-resolution appearance, restart near the last known
+    position, and occur within a label-specific time window. This prevents a
+    long disappearance timeout alone from merging unrelated objects.
+    """
+    first_detections = list(first_tracker.past_detections)
+    second_detections = list(second_tracker.past_detections)
+    if not first_detections or not second_detections:
+        return 1.0
+
+    first_latest = max(first_detections, key=lambda d: d.data["frame_time"])
+    second_latest = max(second_detections, key=lambda d: d.data["frame_time"])
+    if first_latest.data["frame_time"] <= second_latest.data["frame_time"]:
+        old_detections, new_detections = first_detections, second_detections
+    else:
+        old_detections, new_detections = second_detections, first_detections
+
+    old_detection = max(old_detections, key=lambda d: d.data["frame_time"])
+    new_detection = min(new_detections, key=lambda d: d.data["frame_time"])
+    label = str(new_detection.data.get("label", ""))
+    limits = REID_LIMITS.get(label)
+    if limits is None or old_detection.data.get("label") != label:
+        return 1.0
+
+    gap = float(new_detection.data["frame_time"] - old_detection.data["frame_time"])
+    if gap <= 0 or gap > limits["max_gap"]:
+        return 1.0
+
+    old_box = np.asarray(old_detection.data["box"], dtype=float)
+    new_box = np.asarray(new_detection.data["box"], dtype=float)
+    old_width = max(1.0, old_box[2] - old_box[0])
+    old_height = max(1.0, old_box[3] - old_box[1])
+    new_width = max(1.0, new_box[2] - new_box[0])
+    new_height = max(1.0, new_box[3] - new_box[1])
+    old_position = np.array([(old_box[0] + old_box[2]) / 2.0, old_box[3]])
+    new_position = np.array([(new_box[0] + new_box[2]) / 2.0, new_box[3]])
+    object_scale = max(old_width, old_height, new_width, new_height)
+    normalized_shift = float(np.linalg.norm(new_position - old_position) / object_scale)
+    if normalized_shift > limits["max_shift"]:
+        return 1.0
+
+    correlations: list[float] = []
+    for old in old_detections:
+        if old.embedding is None:
+            continue
+        for new in new_detections:
+            if new.embedding is None:
+                continue
+            correlations.append(
+                float(cv2.compareHist(old.embedding, new.embedding, cv2.HISTCMP_CORREL))
+            )
+
+    if not correlations:
+        return 1.0
+
+    correlation = max(correlations)
+    if correlation < limits["min_correlation"]:
+        return 1.0
+
+    old_area = old_width * old_height
+    new_area = new_width * new_height
+    area_ratio = max(old_area, new_area) / max(1.0, min(old_area, new_area))
+    area_change = min(1.0, abs(float(np.log(area_ratio))) / float(np.log(4.0)))
+
+    return float(
+        0.55 * (1.0 - correlation)
+        + 0.25 * (normalized_shift / limits["max_shift"])
+        + 0.15 * (gap / limits["max_gap"])
+        + 0.05 * area_change
+    )
 
 
 class NorfairTracker(ObjectTracker):
@@ -143,6 +307,35 @@ class NorfairTracker(ObjectTracker):
                 "filter_factory": OptimizedKalmanFilterFactory(R=2.5, Q=0.05),
                 "distance_function": frigate_distance,
                 "distance_threshold": 3.75,
+            },
+            "vehicle": {
+                "filter_factory": OptimizedKalmanFilterFactory(R=3.4, Q=0.03),
+                "distance_function": frigate_distance,
+                "distance_threshold": 2.75,
+                "past_detections_length": 12,
+                "reid_distance_function": appearance_reid_distance,
+                "reid_distance_threshold": 0.42,
+                "reid_hit_counter_max": 60,
+            },
+            "person": {
+                "filter_factory": OptimizedKalmanFilterFactory(R=3.4, Q=0.06),
+                "distance_function": frigate_distance,
+                "distance_threshold": 2.5,
+                "past_detections_length": 8,
+                "reid_distance_function": appearance_reid_distance,
+                "reid_distance_threshold": 0.38,
+                "reid_hit_counter_max": 20,
+            },
+            "animal": {
+                "filter_factory": OptimizedKalmanFilterFactory(R=3.2, Q=0.08),
+                "distance_function": frigate_distance,
+                "distance_threshold": 2.35,
+                # Keep a clean pre-overlap descriptor so a merged cat box does
+                # not replace every useful appearance sample.
+                "past_detections_length": 25,
+                "reid_distance_function": appearance_reid_distance,
+                "reid_distance_threshold": 0.44,
+                "reid_hit_counter_max": 100,
             },
         }
 
@@ -269,6 +462,30 @@ class NorfairTracker(ObjectTracker):
         if object_type in self.trackers:
             return self.trackers[object_type][mode]
         return self.default_tracker[mode]
+
+    def _find_norfair_track(self, track_id: str) -> TrackedObject | None:
+        """Find an internal Norfair track, including a dormant ReID candidate."""
+        all_trackers = [
+            tracker for modes in self.trackers.values() for tracker in modes.values()
+        ] + list(self.default_tracker.values())
+        return next(
+            (
+                obj
+                for tracker in all_trackers
+                for obj in tracker.tracked_objects
+                if str(obj.global_id) == track_id
+            ),
+            None,
+        )
+
+    def _is_reid_pending(self, track_id: str) -> bool:
+        """Return true while Norfair is retaining a dead track for visual ReID."""
+        track = self._find_norfair_track(track_id)
+        return bool(
+            track is not None
+            and track.reid_hit_counter is not None
+            and track.reid_hit_counter_is_positive
+        )
 
     def register(self, track_id: str, obj: dict[str, Any]) -> None:
         rand_id = "".join(random.choices(string.ascii_lowercase + string.digits, k=6))
@@ -515,14 +732,23 @@ class NorfairTracker(ObjectTracker):
         # Group detections by object type
         detections_by_type: dict[str, list[Detection]] = {}
         yuv_frame: np.ndarray | None = None
+        bgr_frame: np.ndarray | None = None
 
+        has_reid_detections = any(obj[0] in REID_LIMITS for obj in detections)
         if (
             self.ptz_metrics.autotracker_enabled.value
             or self.detect_config.stationary.classifier
+            or has_reid_detections
         ):
             yuv_frame = self.frame_manager.get(
                 frame_name, self.camera_config.frame_shape_yuv
             )
+        if yuv_frame is not None and (
+            self.ptz_metrics.autotracker_enabled.value or has_reid_detections
+        ):
+            # Convert once for every detection in this frame. The previous PTZ
+            # path converted the complete frame separately for each object.
+            bgr_frame = cv2.cvtColor(yuv_frame, cv2.COLOR_YUV2BGR_I420)
         for obj in detections:
             label = obj[0]
             if label not in detections_by_type:
@@ -536,10 +762,10 @@ class NorfairTracker(ObjectTracker):
             points = np.array([[obj[2][0], obj[2][1]], [obj[2][2], obj[2][3]]])
 
             embedding = None
-            if self.ptz_metrics.autotracker_enabled.value:
-                embedding = get_histogram(
-                    yuv_frame, obj[2][0], obj[2][1], obj[2][2], obj[2][3]
-                )
+            if bgr_frame is not None and (
+                self.ptz_metrics.autotracker_enabled.value or label in REID_LIMITS
+            ):
+                embedding = appearance_histogram(bgr_frame, obj[2])
 
             detection = Detection(
                 points=points,
@@ -639,6 +865,8 @@ class NorfairTracker(ObjectTracker):
         # clear expired tracks
         expired_ids = [k for k in self.track_id_map.keys() if k not in active_ids]
         for e_id in expired_ids:
+            if self._is_reid_pending(e_id):
+                continue
             self.deregister(self.track_id_map[e_id], e_id)
 
         # update list of object boxes that don't have a tracked object yet
