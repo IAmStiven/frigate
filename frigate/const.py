@@ -63,11 +63,13 @@ ATTRIBUTE_LABEL_DISPLAY_MAP = {
     "usps": "USPS",
 }
 LABEL_CONSOLIDATION_MAP = {
+    "animal": 0.95,
     "car": 0.8,
     "face": 0.5,
 }
 LABEL_CONSOLIDATION_DEFAULT = 0.9
 LABEL_NMS_MAP = {
+    "animal": 0.65,
     "car": 0.6,
 }
 LABEL_NMS_DEFAULT = 0.4
