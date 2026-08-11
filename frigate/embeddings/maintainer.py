@@ -4,10 +4,13 @@ import base64
 import datetime
 import json
 import logging
+import os
 import threading
 from multiprocessing.synchronize import Event as MpEvent
 from typing import Any
 
+import cv2
+import numpy as np
 from peewee import DoesNotExist
 
 from frigate.comms.config_updater import ConfigSubscriber
@@ -35,6 +38,7 @@ from frigate.config.camera.updater import (
     CameraConfigUpdateSubscriber,
 )
 from frigate.config.classification import ObjectClassificationType
+from frigate.const import CLIPS_DIR
 from frigate.data_processing.common.license_plate.model import (
     LicensePlateModelRunner,
 )
@@ -70,7 +74,8 @@ from frigate.models import Event, Recordings, ReviewSegment, Trigger
 from frigate.types import TrackedObjectUpdateTypesEnum
 from frigate.util.builtin import serialize
 from frigate.util.file import get_event_thumbnail_bytes
-from frigate.util.image import SharedMemoryFrameManager
+from frigate.util.highres import HighResolutionFrameProvider
+from frigate.util.image import SharedMemoryFrameManager, get_image_from_recording
 
 from .embeddings import Embeddings
 
@@ -157,6 +162,7 @@ class EmbeddingMaintainer(threading.Thread):
         self.detection_subscriber = DetectionSubscriber(DetectionTypeEnum.video.value)
         self.embeddings_responder = EmbeddingsResponder()
         self.frame_manager = SharedMemoryFrameManager()
+        self.high_resolution_frames = HighResolutionFrameProvider(config)
 
         self.detected_license_plates: dict[str, dict[str, Any]] = {}
 
@@ -280,6 +286,7 @@ class EmbeddingMaintainer(threading.Thread):
 
         # recordings data
         self.recordings_available_through: dict[str, float] = {}
+        self.pending_high_resolution_snapshots: dict[str, tuple[str, float]] = {}
 
     def run(self) -> None:
         """Maintain a SQLite-vec database for semantic search."""
@@ -309,6 +316,7 @@ class EmbeddingMaintainer(threading.Thread):
         self.event_metadata_publisher.stop()
         self.event_metadata_subscriber.stop()
         self.embeddings_responder.stop()
+        self.high_resolution_frames.stop()
         self.requestor.stop()
         logger.info("Exiting embeddings maintenance...")
 
@@ -488,6 +496,7 @@ class EmbeddingMaintainer(threading.Thread):
             return
 
         # Create our own thumbnail based on the bounding box and the frame time
+        yuv_frame = None
         try:
             yuv_frame = self.frame_manager.get(
                 frame_name, camera_config.frame_shape_yuv
@@ -505,9 +514,18 @@ class EmbeddingMaintainer(threading.Thread):
         logger.debug(
             f"Processing {len(self.realtime_processors)} realtime processors for object {data.get('id')} (label: {data.get('label')})"
         )
+        processing_frame = self.high_resolution_frames.get_frame(camera)
+        processing_data = data
+        if processing_frame is not None:
+            processing_data = self.high_resolution_frames.scale_object_data(
+                camera, data, processing_frame
+            )
+        else:
+            processing_frame = yuv_frame
+
         for processor in self.realtime_processors:
             logger.debug(f"Calling process_frame on {processor.__class__.__name__}")
-            processor.process_frame(data, yuv_frame)
+            processor.process_frame(processing_data, processing_frame)
 
         for processor in self.post_processors:
             if isinstance(processor, ObjectDescriptionProcessor):
@@ -520,9 +538,9 @@ class EmbeddingMaintainer(threading.Thread):
                 processor.process_data(
                     {
                         "camera": camera,
-                        "data": data,
+                        "data": processing_data,
                         "state": "update",
-                        "yuv_frame": yuv_frame,
+                        "yuv_frame": processing_frame,
                     },
                     PostProcessDataEnum.tracked_object,
                 )
@@ -563,6 +581,8 @@ class EmbeddingMaintainer(threading.Thread):
 
                 # Extract valid thumbnail
                 thumbnail = get_event_thumbnail_bytes(event)
+
+                self._queue_high_resolution_snapshot(event)
 
                 # Embed the thumbnail
                 self._embed_thumbnail(event_id, thumbnail)
@@ -662,6 +682,125 @@ class EmbeddingMaintainer(threading.Thread):
                 logger.debug(
                     f"{camera} now has recordings available through {recordings_available_through_timestamp}"
                 )
+                self._process_pending_high_resolution_snapshots(
+                    camera, recordings_available_through_timestamp
+                )
+
+    def _queue_high_resolution_snapshot(self, event: Event) -> None:
+        """Queue a completed event snapshot for replacement from recordings."""
+        camera_config = self.config.cameras[event.camera]
+        if not (
+            event.has_snapshot
+            and camera_config.snapshots.enabled
+            and camera_config.record.enabled
+        ):
+            return
+
+        frame_time = event.data.get("snapshot_frame_time", event.start_time)
+        self.pending_high_resolution_snapshots[event.id] = (
+            event.camera,
+            frame_time,
+        )
+
+        available_through = self.recordings_available_through.get(event.camera, 0)
+        if frame_time <= available_through:
+            self._process_pending_high_resolution_snapshots(
+                event.camera, available_through
+            )
+
+    def _process_pending_high_resolution_snapshots(
+        self, camera: str, available_through: float
+    ) -> None:
+        """Replace ready detect-frame snapshots with exact recording frames."""
+        for event_id, (event_camera, frame_time) in list(
+            self.pending_high_resolution_snapshots.items()
+        ):
+            if event_camera != camera or frame_time > available_through:
+                continue
+
+            if self._write_high_resolution_snapshot(event_id, camera, frame_time):
+                self.pending_high_resolution_snapshots.pop(event_id, None)
+            elif available_through > frame_time + 30:
+                logger.warning(
+                    "Giving up high-resolution snapshot replacement for %s",
+                    event_id,
+                )
+                self.pending_high_resolution_snapshots.pop(event_id, None)
+
+    def _write_high_resolution_snapshot(
+        self, event_id: str, camera: str, frame_time: float
+    ) -> bool:
+        """Write the recording frame at the selected snapshot timestamp."""
+        recording_frame_time = (
+            frame_time + self.high_resolution_frames.get_time_offset(camera)
+        )
+        recording_query = (
+            Recordings.select(Recordings.path, Recordings.start_time)
+            .where(
+                (recording_frame_time >= Recordings.start_time)
+                & (recording_frame_time <= Recordings.end_time)
+                & (Recordings.camera == camera)
+            )
+            .order_by(Recordings.start_time.desc())
+            .limit(1)
+        )
+
+        try:
+            recording = recording_query.get()
+        except DoesNotExist:
+            logger.debug(
+                "No recording frame is available yet for high-resolution snapshot %s",
+                event_id,
+            )
+            return False
+
+        image_data = get_image_from_recording(
+            self.config.ffmpeg,
+            recording.path,
+            recording_frame_time - recording.start_time,
+            "mjpeg",
+            None,
+        )
+        if not image_data:
+            logger.debug(
+                "Unable to extract recording frame for high-resolution snapshot %s",
+                event_id,
+            )
+            return False
+
+        image = cv2.imdecode(
+            np.frombuffer(image_data, dtype=np.uint8), cv2.IMREAD_COLOR
+        )
+        if image is None:
+            return False
+
+        quality = self.config.cameras[camera].snapshots.quality
+        encoded, webp = cv2.imencode(
+            ".webp", image, [int(cv2.IMWRITE_WEBP_QUALITY), quality]
+        )
+        if not encoded:
+            return False
+
+        snapshot_path = os.path.join(CLIPS_DIR, f"{camera}-{event_id}-clean.webp")
+        temporary_path = f"{snapshot_path}.tmp"
+        try:
+            with open(temporary_path, "wb") as snapshot_file:
+                snapshot_file.write(webp.tobytes())
+            os.replace(temporary_path, snapshot_path)
+        except OSError:
+            logger.exception(
+                "Unable to write high-resolution snapshot for event %s", event_id
+            )
+            return False
+
+        logger.debug(
+            "Replaced snapshot for %s with %sx%s recording frame at offset %.3fs",
+            event_id,
+            image.shape[1],
+            image.shape[0],
+            recording_frame_time - frame_time,
+        )
+        return True
 
     def _process_review_updates(self) -> None:
         """Process review updates."""
@@ -725,6 +864,7 @@ class EmbeddingMaintainer(threading.Thread):
             # no active features that use this data
             return
 
+        yuv_frame = None
         try:
             yuv_frame = self.frame_manager.get(
                 frame_name, camera_config.frame_shape_yuv
@@ -738,17 +878,32 @@ class EmbeddingMaintainer(threading.Thread):
             )
             return
 
+        has_relevant_state_classifier = any(
+            isinstance(processor, CustomStateClassificationProcessor)
+            and processor.model_config.state_config is not None
+            and camera in processor.model_config.state_config.cameras
+            for processor in self.realtime_processors
+        )
+
+        processing_frame = None
+        if (dedicated_lpr_enabled and motion_boxes) or has_relevant_state_classifier:
+            processing_frame = self.high_resolution_frames.get_frame(
+                camera, refresh=bool(motion_boxes)
+            )
+        if processing_frame is None:
+            processing_frame = yuv_frame
+
         for processor in self.realtime_processors:
             if (
                 dedicated_lpr_enabled
                 and len(motion_boxes) > 0
                 and isinstance(processor, LicensePlateRealTimeProcessor)
             ):
-                processor.process_frame(camera, yuv_frame, True)
+                processor.process_frame(camera, processing_frame, True)
 
             if isinstance(processor, CustomStateClassificationProcessor):
                 processor.process_frame(
-                    {"camera": camera, "motion": motion_boxes}, yuv_frame
+                    {"camera": camera, "motion": motion_boxes}, processing_frame
                 )
 
         self.frame_manager.close(frame_name)
