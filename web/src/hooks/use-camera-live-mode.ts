@@ -7,7 +7,6 @@ import { detectCameraAudioFeatures } from "@/utils/cameraUtil";
 
 export default function useCameraLiveMode(
   cameras: CameraConfig[],
-  windowVisible: boolean,
   activeStreams?: { [cameraName: string]: string },
 ) {
   const { data: config } = useSWR<FrigateConfig>("config");
@@ -46,69 +45,83 @@ export default function useCameraLiveMode(
   // Fetch stream metadata with deferred loading (doesn't block initial render)
   const streamMetadata = useDeferredStreamMetadata(restreamedStreamNames);
 
-  // Compute live mode states
-  const [preferredLiveModes, setPreferredLiveModes] = useState<{
-    [key: string]: LivePlayerMode;
-  }>({});
-  const [isRestreamedStates, setIsRestreamedStates] = useState<{
-    [key: string]: boolean;
-  }>({});
-  const [supportsAudioOutputStates, setSupportsAudioOutputStates] = useState<{
-    [key: string]: {
-      supportsAudio: boolean;
-      cameraName: string;
-    };
-  }>({});
-
-  useEffect(() => {
-    if (!cameras || cameras.length === 0) return;
-
+  // Derive stream capabilities instead of copying them into state. This keeps
+  // camera visibility and metadata updates from causing cascading renders.
+  const liveModeStates = useMemo(() => {
     const mseSupported =
       "MediaSource" in window || "ManagedMediaSource" in window;
-
-    const newPreferredLiveModes: { [key: string]: LivePlayerMode } = {};
-    const newIsRestreamedStates: { [key: string]: boolean } = {};
-    const newSupportsAudioOutputStates: {
-      [key: string]: { supportsAudio: boolean; cameraName: string };
-    } = {};
+    const preferred: { [key: string]: LivePlayerMode } = {};
+    const restreamed: { [key: string]: boolean } = {};
 
     cameras.forEach((camera) => {
       const selectedStreamName =
         activeStreams?.[camera.name] ?? Object.values(camera.live.streams)[0];
-      const isRestreamed =
+      const isRestreamed = Boolean(
         config &&
-        Object.keys(config.go2rtc.streams || {}).includes(selectedStreamName);
+          Object.prototype.hasOwnProperty.call(
+            config.go2rtc.streams || {},
+            selectedStreamName,
+          ),
+      );
 
-      newIsRestreamedStates[camera.name] = isRestreamed ?? false;
+      restreamed[camera.name] = isRestreamed;
+      preferred[camera.name] = isRestreamed
+        ? mseSupported
+          ? "mse"
+          : "webrtc"
+        : "jsmpeg";
+    });
 
-      if (!mseSupported) {
-        newPreferredLiveModes[camera.name] = isRestreamed ? "webrtc" : "jsmpeg";
-      } else {
-        newPreferredLiveModes[camera.name] = isRestreamed ? "mse" : "jsmpeg";
-      }
+    return { preferred, restreamed };
+  }, [activeStreams, cameras, config]);
 
-      // Check each stream for audio support
-      if (isRestreamed) {
+  const [preferredLiveModes, setPreferredLiveModes] = useState<{
+    [key: string]: LivePlayerMode;
+  }>({});
+
+  useEffect(() => {
+    setPreferredLiveModes((current) => {
+      const next = liveModeStates.preferred;
+      const currentKeys = Object.keys(current);
+      const nextKeys = Object.keys(next);
+      const unchanged =
+        currentKeys.length === nextKeys.length &&
+        nextKeys.every((key) => current[key] === next[key]);
+
+      return unchanged ? current : next;
+    });
+  }, [liveModeStates.preferred]);
+
+  const supportsAudioOutputStates = useMemo<{
+    [key: string]: {
+      supportsAudio: boolean;
+      cameraName: string;
+    };
+  }>(() => {
+    const states: {
+      [key: string]: { supportsAudio: boolean; cameraName: string };
+    } = {};
+
+    cameras.forEach((camera) => {
+      if (liveModeStates.restreamed[camera.name]) {
         Object.values(camera.live.streams).forEach((streamName) => {
           const metadata = streamMetadata[streamName];
           const audioFeatures = detectCameraAudioFeatures(metadata);
-          newSupportsAudioOutputStates[streamName] = {
+          states[streamName] = {
             supportsAudio: audioFeatures.audioOutput,
             cameraName: camera.name,
           };
         });
       } else {
-        newSupportsAudioOutputStates[camera.name] = {
+        states[camera.name] = {
           supportsAudio: false,
           cameraName: camera.name,
         };
       }
     });
 
-    setPreferredLiveModes(newPreferredLiveModes);
-    setIsRestreamedStates(newIsRestreamedStates);
-    setSupportsAudioOutputStates(newSupportsAudioOutputStates);
-  }, [activeStreams, cameras, config, windowVisible, streamMetadata]);
+    return states;
+  }, [cameras, liveModeStates.restreamed, streamMetadata]);
 
   const resetPreferredLiveMode = useCallback(
     (cameraName: string) => {
@@ -143,7 +156,7 @@ export default function useCameraLiveMode(
     preferredLiveModes,
     setPreferredLiveModes,
     resetPreferredLiveMode,
-    isRestreamedStates,
+    isRestreamedStates: liveModeStates.restreamed,
     supportsAudioOutputStates,
     streamMetadata,
   };

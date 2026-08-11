@@ -54,8 +54,11 @@ export default function WebRtcPlayer({
   const pcRef = useRef<RTCPeerConnection | undefined>(undefined);
   const wsRef = useRef<WebSocket | null>(null);
   const videoRef = useRef<HTMLVideoElement | null>(null);
-  const [bufferTimeout, setBufferTimeout] = useState<NodeJS.Timeout>();
-  const videoLoadTimeoutRef = useRef<NodeJS.Timeout>(undefined);
+  const bufferTimeoutRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const videoLoadTimeoutRef = useRef<ReturnType<typeof setTimeout> | null>(
+    null,
+  );
+  const connectionGenerationRef = useRef(0);
 
   const PeerConnection = useCallback(
     async (media: string) => {
@@ -124,17 +127,17 @@ export default function WebRtcPlayer({
   }
 
   const connect = useCallback(
-    async (aPc: Promise<RTCPeerConnection | undefined>) => {
-      if (!aPc) {
+    (pc: RTCPeerConnection | undefined) => {
+      if (!pc) {
         return;
       }
 
-      pcRef.current = await aPc;
+      pcRef.current = pc;
       wsRef.current = new WebSocket(wsURL);
       const ws = wsRef.current;
 
       ws.addEventListener("open", () => {
-        pcRef.current?.addEventListener("icecandidate", (ev) => {
+        pc.addEventListener("icecandidate", (ev) => {
           if (!ev.candidate) return;
           const msg = {
             type: "webrtc/candidate",
@@ -143,13 +146,12 @@ export default function WebRtcPlayer({
           ws.send(JSON.stringify(msg));
         });
 
-        pcRef.current
-          ?.createOffer()
-          .then((offer) => pcRef.current?.setLocalDescription(offer))
+        pc.createOffer()
+          .then((offer) => pc.setLocalDescription(offer))
           .then(() => {
             const msg = {
               type: "webrtc/offer",
-              value: pcRef.current?.localDescription?.sdp,
+              value: pc.localDescription?.sdp,
             };
             ws.send(JSON.stringify(msg));
           });
@@ -158,9 +160,9 @@ export default function WebRtcPlayer({
       ws.addEventListener("message", (ev) => {
         const msg = JSON.parse(ev.data);
         if (msg.type === "webrtc/candidate") {
-          pcRef.current?.addIceCandidate({ candidate: msg.value, sdpMid: "0" });
+          pc.addIceCandidate({ candidate: msg.value, sdpMid: "0" });
         } else if (msg.type === "webrtc/answer") {
-          pcRef.current?.setRemoteDescription({
+          pc.setRemoteDescription({
             type: "answer",
             sdp: msg.value,
           });
@@ -171,7 +173,8 @@ export default function WebRtcPlayer({
   );
 
   useEffect(() => {
-    if (!videoRef.current) {
+    const video = videoRef.current;
+    if (!video) {
       return;
     }
 
@@ -179,20 +182,36 @@ export default function WebRtcPlayer({
       return;
     }
 
-    const aPc = PeerConnection(
+    const generation = ++connectionGenerationRef.current;
+    void PeerConnection(
       microphoneEnabled ? "video+audio+microphone" : "video+audio",
-    );
-    connect(aPc);
+    ).then((pc) => {
+      if (generation !== connectionGenerationRef.current || !playbackEnabled) {
+        pc?.getSenders().forEach((sender) => sender.track?.stop());
+        pc?.close();
+        video.srcObject = null;
+        return;
+      }
+
+      connect(pc);
+    });
 
     return () => {
+      connectionGenerationRef.current += 1;
+      if (bufferTimeoutRef.current) {
+        clearTimeout(bufferTimeoutRef.current);
+        bufferTimeoutRef.current = null;
+      }
       if (wsRef.current) {
         wsRef.current.close();
         wsRef.current = null;
       }
       if (pcRef.current) {
+        pcRef.current.getSenders().forEach((sender) => sender.track?.stop());
         pcRef.current.close();
         pcRef.current = undefined;
       }
+      video.srcObject = null;
     };
   }, [
     camera,
@@ -229,6 +248,10 @@ export default function WebRtcPlayer({
   }, [volume, videoRef]);
 
   useEffect(() => {
+    if (!playbackEnabled) {
+      return;
+    }
+
     videoLoadTimeoutRef.current = setTimeout(() => {
       handleError("stalled", "WebRTC connection timed out.");
     }, 5000);
@@ -236,15 +259,21 @@ export default function WebRtcPlayer({
     return () => {
       if (videoLoadTimeoutRef.current) {
         clearTimeout(videoLoadTimeoutRef.current);
+        videoLoadTimeoutRef.current = null;
       }
     };
     // we know that these deps are correct
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, []);
+  }, [playbackEnabled]);
 
   const handleLoadedData = () => {
     if (videoLoadTimeoutRef.current) {
       clearTimeout(videoLoadTimeoutRef.current);
+      videoLoadTimeoutRef.current = null;
+    }
+    if (bufferTimeoutRef.current) {
+      clearTimeout(bufferTimeoutRef.current);
+      bufferTimeoutRef.current = null;
     }
     onPlaying?.();
   };
@@ -334,24 +363,21 @@ export default function WebRtcPlayer({
                 return;
               }
 
-              if (bufferTimeout) {
-                clearTimeout(bufferTimeout);
-                setBufferTimeout(undefined);
+              if (bufferTimeoutRef.current) {
+                clearTimeout(bufferTimeoutRef.current);
               }
 
-              setBufferTimeout(
-                setTimeout(() => {
-                  if (
-                    document.visibilityState === "visible" &&
-                    pcRef.current != undefined
-                  ) {
-                    handleError(
-                      "stalled",
-                      "Media playback has stalled after 3 seconds due to insufficient buffering or a network interruption.",
-                    );
-                  }
-                }, 3000),
-              );
+              bufferTimeoutRef.current = setTimeout(() => {
+                if (
+                  document.visibilityState === "visible" &&
+                  pcRef.current != undefined
+                ) {
+                  handleError(
+                    "stalled",
+                    "Media playback has stalled after 3 seconds due to insufficient buffering or a network interruption.",
+                  );
+                }
+              }, 3000);
             }
           : undefined
       }

@@ -53,6 +53,39 @@ export default function PreviewThumbnailPlayer({
   const apiHost = useApiHost();
   const { data: config } = useSWR<FrigateConfig>("config");
   const [imgRef, imgLoaded, onImgLoad] = useImageLoaded();
+  const [shouldLoadThumbnail, setShouldLoadThumbnail] = useState(false);
+
+  // Native lazy loading is unreliable inside overflow containers on Safari.
+  // Keep the URL off the image until it is close to the viewport so iOS does
+  // not eagerly request an entire day of review thumbnails at once.
+  useEffect(() => {
+    const image = imgRef.current;
+
+    if (!image || shouldLoadThumbnail) {
+      return;
+    }
+
+    if (!("IntersectionObserver" in window)) {
+      setShouldLoadThumbnail(true);
+      return;
+    }
+
+    const observer = new IntersectionObserver(
+      (entries) => {
+        if (entries.some((entry) => entry.isIntersecting)) {
+          setShouldLoadThumbnail(true);
+          observer.disconnect();
+        }
+      },
+      {
+        rootMargin: "600px 0px",
+        threshold: 0.01,
+      },
+    );
+
+    observer.observe(image);
+    return () => observer.disconnect();
+  }, [imgRef, shouldLoadThumbnail]);
 
   // interaction
 
@@ -234,8 +267,13 @@ export default function PreviewThumbnailPlayer({
               : undefined
           }
           draggable={false}
-          src={`${apiHost}${review.thumb_path.replace("/media/frigate/", "")}`}
-          loading={isSafari ? "eager" : "lazy"}
+          src={
+            shouldLoadThumbnail
+              ? `${apiHost}${review.thumb_path.replace("/media/frigate/", "")}`
+              : undefined
+          }
+          loading="eager"
+          decoding="async"
           onLoad={() => {
             onImgLoad();
           }}

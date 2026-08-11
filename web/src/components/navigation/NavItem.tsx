@@ -10,6 +10,7 @@ import { NavData } from "@/types/navigation";
 import { IconType } from "react-icons";
 import { cn } from "@/lib/utils";
 import { useTranslation } from "react-i18next";
+import { preloadRoute } from "@/lib/routePreload";
 
 const variants = {
   primary: {
@@ -46,6 +47,9 @@ export default function NavItem({
     <NavLink
       to={item.url}
       onClick={onClick}
+      onPointerEnter={() => preloadRoute(item.url)}
+      onFocus={() => preloadRoute(item.url)}
+      onTouchStart={() => preloadRoute(item.url)}
       className={({ isActive }) =>
         cn(
           "flex flex-col items-center justify-center rounded-lg p-[6px]",

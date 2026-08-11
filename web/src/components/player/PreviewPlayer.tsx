@@ -216,7 +216,7 @@ function PreviewVideoPlayer({
 
   const canvasRef = useRef<HTMLCanvasElement | null>(null);
   const [videoSize, setVideoSize] = useState<number[]>([0, 0]);
-  const [changeoverTimeout, setChangeoverTimeout] = useState<NodeJS.Timeout>();
+  const changeoverFrameRef = useRef<number | null>(null);
 
   const changeSource = useCallback(
     (newPreview: Preview | undefined, video: HTMLVideoElement | null) => {
@@ -240,21 +240,27 @@ function PreviewVideoPlayer({
       }
 
       setCurrentPreview(newPreview);
-      const timeout = setTimeout(() => {
-        if (timeout) {
-          clearTimeout(timeout);
-          setChangeoverTimeout(undefined);
-        }
-
+      if (changeoverFrameRef.current != null) {
+        cancelAnimationFrame(changeoverFrameRef.current);
+      }
+      changeoverFrameRef.current = requestAnimationFrame(() => {
+        changeoverFrameRef.current = null;
         previewRef.current?.load();
-      }, 1000);
-      setChangeoverTimeout(timeout);
+      });
 
       // we only want this to change when current preview changes
       // eslint-disable-next-line react-hooks/exhaustive-deps
     },
     [setCurrentHourFrame, videoSize],
   );
+
+  useEffect(() => {
+    return () => {
+      if (changeoverFrameRef.current != null) {
+        cancelAnimationFrame(changeoverFrameRef.current);
+      }
+    };
+  }, []);
 
   useEffect(() => {
     if (!controller) {
@@ -292,9 +298,9 @@ function PreviewVideoPlayer({
         className={`absolute size-full object-contain ${currentHourFrame ? "visible" : "invisible"}`}
         src={currentHourFrame}
         onLoad={() => {
-          if (changeoverTimeout) {
-            clearTimeout(changeoverTimeout);
-            setChangeoverTimeout(undefined);
+          if (changeoverFrameRef.current != null) {
+            cancelAnimationFrame(changeoverFrameRef.current);
+            changeoverFrameRef.current = null;
           }
 
           previewRef.current?.load();

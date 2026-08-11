@@ -6,36 +6,51 @@ import monacoEditorPlugin from "vite-plugin-monaco-editor";
 
 const proxyHost = process.env.PROXY_HOST || "localhost:5000";
 
+const backendProxy = {
+  "/api": {
+    target: `http://${proxyHost}`,
+    ws: true,
+  },
+  "/vod": {
+    target: `http://${proxyHost}`,
+  },
+  "/clips": {
+    target: `http://${proxyHost}`,
+  },
+  "/exports": {
+    target: `http://${proxyHost}`,
+  },
+  "/ws": {
+    target: `ws://${proxyHost}`,
+    ws: true,
+  },
+  "/live": {
+    target: `ws://${proxyHost}`,
+    changeOrigin: true,
+    ws: true,
+  },
+};
+
 // https://vitejs.dev/config/
 export default defineConfig({
   define: {
     "import.meta.vitest": "undefined",
   },
   server: {
-    proxy: {
-      "/api": {
-        target: `http://${proxyHost}`,
-        ws: true,
-      },
-      "/vod": {
-        target: `http://${proxyHost}`,
-      },
-      "/clips": {
-        target: `http://${proxyHost}`,
-      },
-      "/exports": {
-        target: `http://${proxyHost}`,
-      },
-      "/ws": {
-        target: `ws://${proxyHost}`,
-        ws: true,
-      },
-      "/live": {
-        target: `ws://${proxyHost}`,
-        changeOrigin: true,
-        ws: true,
-      },
+    warmup: {
+      clientFiles: [
+        "./src/main.tsx",
+        "./src/App.tsx",
+        "./src/pages/Live.tsx",
+        "./src/pages/Events.tsx",
+        "./src/views/live/LiveDashboardView.tsx",
+        "./src/views/events/EventView.tsx",
+      ],
     },
+    proxy: backendProxy,
+  },
+  preview: {
+    proxy: backendProxy,
   },
   esbuild: {
     keepNames: true,

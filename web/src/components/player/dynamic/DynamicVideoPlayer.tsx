@@ -51,6 +51,7 @@ type DynamicVideoPlayerProps = {
   onClipEnded?: () => void;
   onClipPrevious?: (diff: number) => void;
   onSeekToTime?: (timestamp: number, play?: boolean) => void;
+  onPlaybackReady?: () => void;
   setFullResolution: React.Dispatch<React.SetStateAction<VideoResolutionType>>;
   toggleFullscreen: () => void;
   containerRef?: React.MutableRefObject<HTMLDivElement | null>;
@@ -71,6 +72,7 @@ export default function DynamicVideoPlayer({
   onClipEnded,
   onClipPrevious,
   onSeekToTime,
+  onPlaybackReady,
   setFullResolution,
   toggleFullscreen,
   containerRef,
@@ -128,7 +130,7 @@ export default function DynamicVideoPlayer({
 
   const [isLoading, setIsLoading] = useState(false);
   const [isBuffering, setIsBuffering] = useState(false);
-  const [loadingTimeout, setLoadingTimeout] = useState<NodeJS.Timeout>();
+  const loadingTimeoutRef = useRef<ReturnType<typeof setTimeout> | null>(null);
 
   // Don't set source until recordings load - we need accurate startPosition
   // to avoid hls.js clamping to video end when startPosition exceeds duration
@@ -138,12 +140,13 @@ export default function DynamicVideoPlayer({
 
   useEffect(() => {
     if (!isScrubbing) {
-      setLoadingTimeout(setTimeout(() => setIsLoading(true), 1000));
+      loadingTimeoutRef.current = setTimeout(() => setIsLoading(true), 1000);
     }
 
     return () => {
-      if (loadingTimeout) {
-        clearTimeout(loadingTimeout);
+      if (loadingTimeoutRef.current) {
+        clearTimeout(loadingTimeoutRef.current);
+        loadingTimeoutRef.current = null;
       }
     };
     // we only want trigger when scrubbing state changes
@@ -287,7 +290,10 @@ export default function DynamicVideoPlayer({
       playerRef.current.autoplay = !isScrubbing;
     }
 
-    setLoadingTimeout(setTimeout(() => setIsLoading(true), 1000));
+    if (loadingTimeoutRef.current) {
+      clearTimeout(loadingTimeoutRef.current);
+    }
+    loadingTimeoutRef.current = setTimeout(() => setIsLoading(true), 1000);
 
     controller.newPlayback({
       recordings: recordings ?? [],
@@ -356,11 +362,13 @@ export default function DynamicVideoPlayer({
               playerRef.current?.pause();
             }
 
-            if (loadingTimeout) {
-              clearTimeout(loadingTimeout);
+            if (loadingTimeoutRef.current) {
+              clearTimeout(loadingTimeoutRef.current);
+              loadingTimeoutRef.current = null;
             }
 
             setNoRecording(false);
+            onPlaybackReady?.();
           }}
           setFullResolution={setFullResolution}
           onUploadFrame={onUploadFrameToPlus}

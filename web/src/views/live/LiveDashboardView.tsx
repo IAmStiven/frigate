@@ -194,11 +194,17 @@ export default function LiveDashboardView({
   }, [visibilityListener]);
 
   const [visibleCameras, setVisibleCameras] = useState<string[]>([]);
+  const visibleCameraSet = useMemo(
+    () => new Set(visibleCameras),
+    [visibleCameras],
+  );
   const visibleCameraObserver = useRef<IntersectionObserver | null>(null);
   useEffect(() => {
-    const visibleCameras = new Set<string>();
+    const observedCameras = new Set<string>();
     visibleCameraObserver.current = new IntersectionObserver(
       (entries) => {
+        let changed = false;
+
         entries.forEach((entry) => {
           const camera = (entry.target as HTMLElement).dataset.camera;
 
@@ -207,15 +213,28 @@ export default function LiveDashboardView({
           }
 
           if (entry.isIntersecting) {
-            visibleCameras.add(camera);
+            if (!observedCameras.has(camera)) {
+              observedCameras.add(camera);
+              changed = true;
+            }
           } else {
-            visibleCameras.delete(camera);
+            changed = observedCameras.delete(camera) || changed;
           }
-
-          setVisibleCameras([...visibleCameras]);
         });
+
+        if (changed) {
+          const nextVisibleCameras = [...observedCameras];
+          setVisibleCameras((current) =>
+            current.length === nextVisibleCameras.length &&
+            current.every(
+              (camera, index) => camera === nextVisibleCameras[index],
+            )
+              ? current
+              : nextVisibleCameras,
+          );
+        }
       },
-      { threshold: 0.5 },
+      { rootMargin: "200px 0px", threshold: 0.01 },
     );
 
     return () => {
@@ -278,7 +297,7 @@ export default function LiveDashboardView({
     isRestreamedStates,
     supportsAudioOutputStates,
     streamMetadata,
-  } = useCameraLiveMode(cameras, windowVisible, activeStreams);
+  } = useCameraLiveMode(cameras, activeStreams);
 
   const birdseyeConfig = useMemo(() => config?.birdseye, [config]);
 
@@ -599,7 +618,7 @@ export default function LiveDashboardView({
                         key={camera.name}
                         className={`${grow} rounded-lg bg-black md:rounded-2xl`}
                         windowVisible={
-                          windowVisible && visibleCameras.includes(camera.name)
+                          windowVisible && visibleCameraSet.has(camera.name)
                         }
                         cameraConfig={camera}
                         preferredLiveMode={
