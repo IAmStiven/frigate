@@ -2,6 +2,7 @@
 
 import datetime as dt
 import logging
+import math
 from datetime import datetime, timedelta
 from functools import reduce
 from pathlib import Path
@@ -97,22 +98,41 @@ def all_recordings_summary(
     days: dict[str, bool] = {}
 
     for period_start, period_end, period_offset in dst_periods:
-        day_expr = ((Recordings.start_time + period_offset) / 86400).cast("int")
+        first_day = math.floor((period_start + period_offset) / 86400)
+        last_day = math.floor((period_end + period_offset) / 86400)
 
-        period_query = (
-            Recordings.select(day_expr.alias("day_idx"))
-            .where(
-                (Recordings.camera << camera_list)
-                & (Recordings.end_time >= period_start)
-                & (Recordings.start_time <= period_end)
+        # Check each retained local day with an indexed range lookup. The old
+        # DISTINCT expression evaluated every recording row and took tens of
+        # seconds on systems with continuous recording across many cameras.
+        for day_idx in range(first_day, last_day + 1):
+            utc_day_start = day_idx * 86400 - period_offset
+            utc_day_end = (day_idx + 1) * 86400 - period_offset
+            query_start = max(period_start, utc_day_start)
+            query_end = min(period_end, utc_day_end)
+
+            if query_start > query_end:
+                continue
+
+            end_clause = (
+                Recordings.start_time <= query_end
+                if query_end == period_end
+                else Recordings.start_time < query_end
             )
-            .distinct()
-            .namedtuples()
-        )
+            has_recording = (
+                Recordings.select(Recordings.id)
+                .where(
+                    (Recordings.camera << camera_list)
+                    & (Recordings.start_time >= query_start)
+                    & end_clause
+                )
+                .exists()
+            )
 
-        for g in period_query:
-            day_str = (dt.date(1970, 1, 1) + dt.timedelta(days=g.day_idx)).isoformat()
-            days[day_str] = True
+            if has_recording:
+                day_str = (
+                    dt.date(1970, 1, 1) + dt.timedelta(days=day_idx)
+                ).isoformat()
+                days[day_str] = True
 
     return JSONResponse(content=dict(sorted(days.items())))
 
@@ -120,7 +140,7 @@ def all_recordings_summary(
 @router.get(
     "/{camera_name}/recordings/summary", dependencies=[Depends(require_camera_access)]
 )
-async def recordings_summary(camera_name: str, timezone: str = "utc"):
+def recordings_summary(camera_name: str, timezone: str = "utc"):
     """Returns hourly summary for recordings of given camera"""
 
     time_range_query = (
@@ -224,7 +244,7 @@ async def recordings_summary(camera_name: str, timezone: str = "utc"):
 
 
 @router.get("/{camera_name}/recordings", dependencies=[Depends(require_camera_access)])
-async def recordings(
+def recordings(
     camera_name: str,
     after: float = (datetime.now() - timedelta(hours=1)).timestamp(),
     before: float = datetime.now().timestamp(),
@@ -259,7 +279,7 @@ async def recordings(
     response_model=list[dict],
     dependencies=[Depends(allow_any_authenticated())],
 )
-async def no_recordings(
+def no_recordings(
     request: Request,
     params: MediaRecordingsAvailabilityQueryParams = Depends(),
     allowed_cameras: list[str] = Depends(get_allowed_cameras_for_filter),

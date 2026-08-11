@@ -19,6 +19,7 @@ from fastapi import APIRouter, Depends, Path, Query, Request, Response
 from fastapi.responses import FileResponse, JSONResponse, StreamingResponse
 from pathvalidate import sanitize_filename
 from peewee import DoesNotExist, fn
+from starlette.concurrency import run_in_threadpool
 from tzlocal import get_localzone_name
 
 from frigate.api.auth import (
@@ -554,7 +555,7 @@ async def recording_clip(
     dependencies=[Depends(require_camera_access)],
     description="Returns an HLS playlist for the specified timestamp-range on the specified camera. Append /master.m3u8 or /index.m3u8 for HLS playback.",
 )
-async def vod_ts(
+def vod_ts(
     camera_name: str,
     start_ts: float,
     end_ts: float,
@@ -575,11 +576,10 @@ async def vod_ts(
             Recordings.start_time,
         )
         .where(
-            Recordings.start_time.between(start_ts, end_ts)
-            | Recordings.end_time.between(start_ts, end_ts)
-            | ((start_ts > Recordings.start_time) & (end_ts < Recordings.end_time))
+            (Recordings.camera == camera_name)
+            & (Recordings.end_time >= start_ts)
+            & (Recordings.start_time <= end_ts)
         )
-        .where(Recordings.camera == camera_name)
         .order_by(Recordings.start_time.asc())
         .iterator()
     )
@@ -696,9 +696,9 @@ async def vod_ts(
     dependencies=[Depends(require_camera_access)],
     description="Returns an HLS playlist for the specified date-time on the specified camera. Append /master.m3u8 or /index.m3u8 for HLS playback.",
 )
-async def vod_hour_no_timezone(year_month: str, day: int, hour: int, camera_name: str):
+def vod_hour_no_timezone(year_month: str, day: int, hour: int, camera_name: str):
     """VOD for specific hour. Uses the default timezone (UTC)."""
-    return await vod_hour(
+    return vod_hour(
         year_month, day, hour, camera_name, get_localzone_name().replace("/", ",")
     )
 
@@ -708,7 +708,7 @@ async def vod_hour_no_timezone(year_month: str, day: int, hour: int, camera_name
     dependencies=[Depends(require_camera_access)],
     description="Returns an HLS playlist for the specified date-time (with timezone) on the specified camera. Append /master.m3u8 or /index.m3u8 for HLS playback.",
 )
-async def vod_hour(
+def vod_hour(
     year_month: str, day: int, hour: int, camera_name: str, tz_name: str
 ):
     parts = year_month.split("-")
@@ -720,7 +720,7 @@ async def vod_hour(
     start_ts = start_date.timestamp()
     end_ts = end_date.timestamp()
 
-    return await vod_ts(camera_name, start_ts, end_ts)
+    return vod_ts(camera_name, start_ts, end_ts)
 
 
 @router.get(
@@ -752,7 +752,9 @@ async def vod_event(
         if event.end_time is None
         else (event.end_time + padding)
     )
-    vod_response = await vod_ts(event.camera, event.start_time - padding, end_ts)
+    vod_response = await run_in_threadpool(
+        vod_ts, event.camera, event.start_time - padding, end_ts
+    )
 
     # If the recordings are not found and the event started more than 5 minutes ago, set has_clip to false
     if (
@@ -771,12 +773,12 @@ async def vod_event(
     dependencies=[Depends(require_camera_access)],
     description="Returns an HLS playlist for a timestamp range with HLS discontinuity enabled. Append /master.m3u8 or /index.m3u8 for HLS playback.",
 )
-async def vod_clip(
+def vod_clip(
     camera_name: str,
     start_ts: float,
     end_ts: float,
 ):
-    return await vod_ts(camera_name, start_ts, end_ts, force_discontinuity=True)
+    return vod_ts(camera_name, start_ts, end_ts, force_discontinuity=True)
 
 
 @router.get(
