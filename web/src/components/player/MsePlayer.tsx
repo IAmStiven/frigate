@@ -66,10 +66,10 @@ function MSEPlayer({
   const bufferTimes = useRef<number[]>([]);
   const bufferIndex = useRef(0);
 
-  const [wsState, setWsState] = useState<number>(WebSocket.CLOSED);
-  const [connectTS, setConnectTS] = useState<number>(0);
-  const [bufferTimeout, setBufferTimeout] = useState<NodeJS.Timeout>();
-  const [errorCount, setErrorCount] = useState<number>(0);
+  const wsStateRef = useRef<number>(WebSocket.CLOSED);
+  const connectTSRef = useRef(0);
+  const bufferTimeoutRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const errorCountRef = useRef(0);
   const totalBytesLoaded = useRef(0);
 
   const [fallbackTimeout] = useUserPersistence<number>(
@@ -161,9 +161,9 @@ function MSEPlayer({
     }
 
     intentionalDisconnectRef.current = false;
-    setWsState(WebSocket.CONNECTING);
+    wsStateRef.current = WebSocket.CONNECTING;
 
-    setConnectTS(Date.now());
+    connectTSRef.current = Date.now();
 
     wsRef.current = new WebSocket(wsURL);
     wsRef.current.binaryType = "arraybuffer";
@@ -176,9 +176,9 @@ function MSEPlayer({
   }, [wsURL]);
 
   const onDisconnect = useCallback(() => {
-    if (bufferTimeout) {
-      clearTimeout(bufferTimeout);
-      setBufferTimeout(undefined);
+    if (bufferTimeoutRef.current) {
+      clearTimeout(bufferTimeoutRef.current);
+      bufferTimeoutRef.current = null;
     }
 
     // Clear any pending MSE timeout
@@ -194,6 +194,7 @@ function MSEPlayer({
     }
 
     setIsPlaying(false);
+    wsStateRef.current = WebSocket.CLOSED;
 
     if (wsRef.current) {
       const ws = wsRef.current;
@@ -201,7 +202,6 @@ function MSEPlayer({
       const currentReadyState = ws.readyState;
 
       intentionalDisconnectRef.current = true;
-      setWsState(WebSocket.CLOSED);
 
       // Remove event listeners to prevent them firing during close.
       // Use onCloseRef to remove the exact function that was attached in onConnect,
@@ -228,7 +228,7 @@ function MSEPlayer({
       }
     }
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [bufferTimeout]);
+  }, []);
 
   const handlePause = useCallback(() => {
     // don't let the user pause the live stream
@@ -245,7 +245,7 @@ function MSEPlayer({
       return;
     }
 
-    setWsState(WebSocket.OPEN);
+    wsStateRef.current = WebSocket.OPEN;
 
     wsRef.current?.addEventListener("message", (ev) => {
       if (typeof ev.data === "string") {
@@ -282,11 +282,12 @@ function MSEPlayer({
       return;
     }
 
-    setWsState(WebSocket.CONNECTING);
+    wsStateRef.current = WebSocket.CONNECTING;
     wsRef.current = null;
 
     const delay =
-      timeout ?? Math.max(RECONNECT_TIMEOUT - (Date.now() - connectTS), 0);
+      timeout ??
+      Math.max(RECONNECT_TIMEOUT - (Date.now() - connectTSRef.current), 0);
 
     reconnectTIDRef.current = window.setTimeout(() => {
       reconnectTIDRef.current = null;
@@ -302,11 +303,11 @@ function MSEPlayer({
       return;
     }
 
-    if (wsState === WebSocket.CLOSED) return;
+    if (wsStateRef.current === WebSocket.CLOSED) return;
     reconnect();
     // reconnect is defined below and stable
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [wsState]);
+  }, []);
 
   const sendWithTimeout = (value: object, timeout: number) => {
     return new Promise<void>((resolve, reject) => {
@@ -483,7 +484,7 @@ function MSEPlayer({
         }
       });
 
-      const buf = new Uint8Array(2 * 1024 * 1024);
+      let buf = new Uint8Array(2 * 1024 * 1024);
       let bufLen = 0;
 
       ondataRef.current = (data) => {
@@ -491,6 +492,14 @@ function MSEPlayer({
 
         if (sb?.updating || bufLen > 0) {
           const b = new Uint8Array(data);
+          const requiredLength = bufLen + b.byteLength;
+          if (requiredLength > buf.byteLength) {
+            const expanded = new Uint8Array(
+              Math.max(requiredLength, buf.byteLength * 2),
+            );
+            expanded.set(buf.subarray(0, bufLen));
+            buf = expanded;
+          }
           buf.set(b, bufLen);
           bufLen += b.byteLength;
           // console.debug("VideoRTC.buffer", b.byteLength, bufLen);
@@ -617,33 +626,30 @@ function MSEPlayer({
         return;
       }
 
-      if (bufferTimeout) {
-        clearTimeout(bufferTimeout);
-        setBufferTimeout(undefined);
+      if (bufferTimeoutRef.current) {
+        clearTimeout(bufferTimeoutRef.current);
+        bufferTimeoutRef.current = null;
       }
 
       const timeoutDuration =
         bufferTime == 0
           ? (fallbackTimeout ?? 3) * 2 * 1000
           : (fallbackTimeout ?? 3) * 1000;
-      setBufferTimeout(
-        setTimeout(() => {
-          if (
-            document.visibilityState === "visible" &&
-            wsRef.current != null &&
-            videoRef.current
-          ) {
-            onDisconnect();
-            handleError(
-              "stalled",
-              `Media playback has stalled after ${timeoutDuration / 1000} seconds due to insufficient buffering or a network interruption.`,
-            );
-          }
-        }, timeoutDuration),
-      );
+      bufferTimeoutRef.current = setTimeout(() => {
+        if (
+          document.visibilityState === "visible" &&
+          wsRef.current != null &&
+          videoRef.current
+        ) {
+          onDisconnect();
+          handleError(
+            "stalled",
+            `Media playback has stalled after ${timeoutDuration / 1000} seconds due to insufficient buffering or a network interruption.`,
+          );
+        }
+      }, timeoutDuration);
     }
   }, [
-    bufferTimeout,
     isPlaying,
     onDisconnect,
     handleError,
@@ -722,23 +728,6 @@ function MSEPlayer({
 
     videoRef.current.volume = volume;
   }, [volume, videoRef]);
-
-  // ensure we disconnect for slower connections
-
-  useEffect(() => {
-    if (wsRef.current?.readyState === WebSocket.OPEN && !playbackEnabled) {
-      if (bufferTimeout) {
-        clearTimeout(bufferTimeout);
-        setBufferTimeout(undefined);
-      }
-
-      setTimeout(() => {
-        if (!playbackEnabled) onDisconnect();
-      }, 10000);
-    }
-    // we know that these deps are correct
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [playbackEnabled]);
 
   // stats
 
@@ -839,13 +828,16 @@ function MSEPlayer({
           handleError("mse-decode", "Safari reported decoding errors.");
         }
 
-        setErrorCount((prevCount) => prevCount + 1);
+        errorCountRef.current += 1;
 
         if (wsRef.current) {
           onDisconnect();
-          if (errorCount >= 3) {
+          if (errorCountRef.current >= 3) {
             // too many mse errors, try jsmpeg
-            handleError("startup", `Max error count ${errorCount} exceeded.`);
+            handleError(
+              "startup",
+              `Max error count ${errorCountRef.current} exceeded.`,
+            );
           } else {
             reconnect(5000);
           }

@@ -574,6 +574,11 @@ type DetectionReviewProps = {
   setSelectedReviews: (reviews: ReviewSegment[]) => void;
   pullLatestData: () => void;
 };
+
+const INITIAL_REVIEW_RENDER_COUNT = 12;
+const REVIEW_RENDER_BATCH_SIZE = 4;
+const REVIEW_RENDER_BATCH_DELAY_MS = 100;
+
 function DetectionReview({
   contentRef,
   reviewItems,
@@ -597,6 +602,40 @@ function DetectionReview({
   const { t } = useTranslation(["views/events"]);
 
   const reviewTimelineRef = useRef<HTMLDivElement>(null);
+
+  // Mount the first visible cards immediately, then spread the remaining
+  // thumbnail players across a few frames. A full day can contain dozens of
+  // players, and mounting them all in one render blocks Safari's main thread.
+  const reviewItemIdentity = useMemo(
+    () => currentItems?.map((item) => item.id).join("|") ?? "",
+    [currentItems],
+  );
+  const [renderedItemCount, setRenderedItemCount] = useState(
+    INITIAL_REVIEW_RENDER_COUNT,
+  );
+
+  useEffect(() => {
+    const itemCount = currentItems?.length ?? 0;
+    setRenderedItemCount(Math.min(INITIAL_REVIEW_RENDER_COUNT, itemCount));
+
+    if (itemCount <= INITIAL_REVIEW_RENDER_COUNT) {
+      return;
+    }
+
+    const interval = window.setInterval(() => {
+      setRenderedItemCount((count) => {
+        const nextCount = Math.min(count + REVIEW_RENDER_BATCH_SIZE, itemCount);
+
+        if (nextCount >= itemCount) {
+          window.clearInterval(interval);
+        }
+
+        return nextCount;
+      });
+    }, REVIEW_RENDER_BATCH_DELAY_MS);
+
+    return () => window.clearInterval(interval);
+  }, [reviewItemIdentity, currentItems?.length]);
 
   // preview
 
@@ -855,7 +894,7 @@ function DetectionReview({
           ref={contentRef}
         >
           {!loading && currentItems
-            ? currentItems.map((value) => {
+            ? currentItems.slice(0, renderedItemCount).map((value) => {
                 const selected = selectedReviews.some((r) => r.id === value.id);
 
                 return (
@@ -903,6 +942,15 @@ function DetectionReview({
                 .map((_, idx) => (
                   <Skeleton key={idx} className="aspect-video size-full" />
                 ))}
+          {!loading &&
+            currentItems
+              ?.slice(renderedItemCount)
+              .map((item) => (
+                <Skeleton
+                  key={`${item.id}-pending`}
+                  className="aspect-video size-full"
+                />
+              ))}
           {!loading &&
             (currentItems?.filter((seg) => seg.end_time)?.length ?? 0) > 0 &&
             (itemsToReview ?? 0) > 0 && (

@@ -23,9 +23,6 @@ import { useTranslation } from "react-i18next";
 import ObjectTrackOverlay from "@/components/overlay/ObjectTrackOverlay";
 import { useIsAdmin } from "@/hooks/use-is-admin";
 
-// Android native hls does not seek correctly
-const USE_NATIVE_HLS = false;
-const HLS_MIME_TYPE = "application/vnd.apple.mpegurl" as const;
 const unsupportedErrorCodes = [
   MediaError.MEDIA_ERR_SRC_NOT_SUPPORTED,
   MediaError.MEDIA_ERR_DECODE,
@@ -101,9 +98,9 @@ export default function HlsVideoPlayer({
   // playback
 
   const hlsRef = useRef<Hls>(undefined);
-  const [useHlsCompat, setUseHlsCompat] = useState(false);
+  const [useHlsCompat, setUseHlsCompat] = useState(() => Hls.isSupported());
   const [loadedMetadata, setLoadedMetadata] = useState(false);
-  const [bufferTimeout, setBufferTimeout] = useState<NodeJS.Timeout>();
+  const bufferTimeoutRef = useRef<ReturnType<typeof setTimeout> | null>(null);
 
   const applyVideoDimensions = useCallback(
     (width: number, height: number) => {
@@ -152,44 +149,43 @@ export default function HlsVideoPlayer({
     requestAnimationFrame(tryGetDims);
   }, [videoRef, applyVideoDimensions]);
 
-  useEffect(() => {
-    if (!videoRef.current) {
-      return;
-    }
-
-    if (USE_NATIVE_HLS && videoRef.current.canPlayType(HLS_MIME_TYPE)) {
-      return;
-    } else if (Hls.isSupported()) {
-      setUseHlsCompat(true);
-    }
-  }, [videoRef]);
+  const playlist = currentSource.playlist;
+  const startPosition = currentSource.startPosition;
 
   useEffect(() => {
-    if (!videoRef.current) {
+    const video = videoRef.current;
+    if (!video) {
       return;
     }
 
     setLoadedMetadata(false);
 
-    const currentPlaybackRate = videoRef.current.playbackRate;
+    const currentPlaybackRate = video.playbackRate;
 
     if (!useHlsCompat) {
-      videoRef.current.src = currentSource.playlist;
-      videoRef.current.load();
-      return;
+      video.src = playlist;
+      video.load();
+      return () => {
+        video.pause();
+        video.removeAttribute("src");
+        video.load();
+      };
     }
 
     // Base HLS configuration
     const hlsConfig: Partial<HlsConfig> = {
       maxBufferLength: 10,
       maxBufferSize: 20 * 1000 * 1000,
-      startPosition: currentSource.startPosition,
+      backBufferLength: 15,
+      startFragPrefetch: true,
+      capLevelToPlayerSize: true,
+      startPosition,
     };
 
     hlsRef.current = new Hls(hlsConfig);
-    hlsRef.current.attachMedia(videoRef.current);
-    hlsRef.current.loadSource(currentSource.playlist);
-    videoRef.current.playbackRate = currentPlaybackRate;
+    hlsRef.current.attachMedia(video);
+    hlsRef.current.loadSource(playlist);
+    video.playbackRate = currentPlaybackRate;
 
     return () => {
       // we must destroy the hlsRef every time the source changes
@@ -197,9 +193,10 @@ export default function HlsVideoPlayer({
       // set at the optimal point in time
       if (hlsRef.current) {
         hlsRef.current.destroy();
+        hlsRef.current = undefined;
       }
     };
-  }, [videoRef, hlsRef, useHlsCompat, currentSource]);
+  }, [videoRef, useHlsCompat, playlist, startPosition]);
 
   // state handling
 
@@ -233,7 +230,9 @@ export default function HlsVideoPlayer({
     "playbackRate",
     defaultPlaybackRate ?? 1,
   );
-  const [mobileCtrlTimeout, setMobileCtrlTimeout] = useState<NodeJS.Timeout>();
+  const mobileCtrlTimeoutRef = useRef<ReturnType<typeof setTimeout> | null>(
+    null,
+  );
   const [controls, setControls] = useState(isMobile);
   const [controlsOpen, setControlsOpen] = useState(false);
   const [isSnapshotLoading, setIsSnapshotLoading] = useState(false);
@@ -242,6 +241,17 @@ export default function HlsVideoPlayer({
     width: number;
     height: number;
   }>({ width: 0, height: 0 });
+
+  useEffect(() => {
+    return () => {
+      if (bufferTimeoutRef.current) {
+        clearTimeout(bufferTimeoutRef.current);
+      }
+      if (mobileCtrlTimeoutRef.current) {
+        clearTimeout(mobileCtrlTimeoutRef.current);
+      }
+    };
+  }, []);
 
   const muted = persistedMuted || temporaryMuted;
 
@@ -476,18 +486,26 @@ export default function HlsVideoPlayer({
 
               if (isMobile) {
                 setControls(true);
-                setMobileCtrlTimeout(
-                  setTimeout(() => setControls(false), 4000),
+                if (mobileCtrlTimeoutRef.current) {
+                  clearTimeout(mobileCtrlTimeoutRef.current);
+                }
+                mobileCtrlTimeoutRef.current = setTimeout(
+                  () => setControls(false),
+                  4000,
                 );
               }
             }}
             onPlaying={onPlaying}
             onPause={() => {
               setIsPlaying(false);
-              clearTimeout(bufferTimeout);
+              if (bufferTimeoutRef.current) {
+                clearTimeout(bufferTimeoutRef.current);
+                bufferTimeoutRef.current = null;
+              }
 
-              if (isMobile && mobileCtrlTimeout) {
-                clearTimeout(mobileCtrlTimeout);
+              if (isMobile && mobileCtrlTimeoutRef.current) {
+                clearTimeout(mobileCtrlTimeoutRef.current);
+                mobileCtrlTimeoutRef.current = null;
               }
             }}
             onWaiting={() => {
@@ -496,16 +514,17 @@ export default function HlsVideoPlayer({
                   return;
                 }
 
-                setBufferTimeout(
-                  setTimeout(() => {
-                    if (
-                      document.visibilityState === "visible" &&
-                      videoRef.current
-                    ) {
-                      onError("stalled");
-                    }
-                  }, 3000),
-                );
+                if (bufferTimeoutRef.current) {
+                  clearTimeout(bufferTimeoutRef.current);
+                }
+                bufferTimeoutRef.current = setTimeout(() => {
+                  if (
+                    document.visibilityState === "visible" &&
+                    videoRef.current
+                  ) {
+                    onError("stalled");
+                  }
+                }, 3000);
               }
             }}
             onProgress={() => {
@@ -514,9 +533,9 @@ export default function HlsVideoPlayer({
                   return;
                 }
 
-                if (bufferTimeout) {
-                  clearTimeout(bufferTimeout);
-                  setBufferTimeout(undefined);
+                if (bufferTimeoutRef.current) {
+                  clearTimeout(bufferTimeoutRef.current);
+                  bufferTimeoutRef.current = null;
                 }
               }
             }}

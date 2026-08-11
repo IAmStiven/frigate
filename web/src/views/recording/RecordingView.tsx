@@ -133,13 +133,22 @@ export function RecordingView({
   );
   const [mainCamera, setMainCamera] = useState(startCamera);
 
-  const { data: recordingsSummary } = useSWR<RecordingsSummary>([
-    "recordings/summary",
-    {
-      timezone: timezone,
-      cameras: mainCamera ?? null,
-    },
-  ]);
+  // Give the selected recording and its VOD manifest priority over timeline
+  // summaries. These queries can cover days of data and should not delay the
+  // first video frame.
+  const [primaryPlaybackReady, setPrimaryPlaybackReady] = useState(false);
+
+  const { data: recordingsSummary } = useSWR<RecordingsSummary>(
+    primaryPlaybackReady
+      ? [
+          "recordings/summary",
+          {
+            timezone: timezone,
+            cameras: mainCamera ?? null,
+          },
+        ]
+      : null,
+  );
 
   // controller state
 
@@ -186,6 +195,17 @@ export function RecordingView({
       chunkedTimeRange[chunkedTimeRange.length - 1],
     [selectedRangeIdx, chunkedTimeRange],
   );
+
+  useEffect(() => {
+    setPrimaryPlaybackReady(false);
+
+    // Still populate the timeline when there is no playable recording.
+    const fallback = window.setTimeout(
+      () => setPrimaryPlaybackReady(true),
+      8000,
+    );
+    return () => window.clearTimeout(fallback);
+  }, [mainCamera, currentTimeRange.after, currentTimeRange.before]);
 
   const reviewFilterList = useMemo(() => {
     const uniqueLabels = new Set<string>();
@@ -914,6 +934,7 @@ export function RecordingView({
                   onClipEnded={onClipEnded}
                   onClipPrevious={onClipPrevious}
                   onSeekToTime={manuallySetCurrentTime}
+                  onPlaybackReady={() => setPrimaryPlaybackReady(true)}
                   onControllerReady={(controller) => {
                     mainControllerRef.current = controller;
                   }}
@@ -1015,6 +1036,7 @@ export function RecordingView({
             }
             onAnalysisOpen={onAnalysisOpen}
             isPlaying={mainControllerRef?.current?.isPlaying() ?? false}
+            dataEnabled={primaryPlaybackReady}
           />
         </div>
       </div>
@@ -1033,6 +1055,7 @@ type TimelineProps = {
   currentTime: number;
   exportRange?: TimeRange;
   isPlaying?: boolean;
+  dataEnabled: boolean;
   setCurrentTime: React.Dispatch<React.SetStateAction<number>>;
   manuallySetCurrentTime: (time: number, force: boolean) => void;
   setScrubbing: React.Dispatch<React.SetStateAction<boolean>>;
@@ -1050,6 +1073,7 @@ function Timeline({
   currentTime,
   exportRange,
   isPlaying,
+  dataEnabled,
   setCurrentTime,
   manuallySetCurrentTime,
   setScrubbing,
@@ -1109,25 +1133,33 @@ function Timeline({
   const alignedAfter = alignStartDateToTimeline(timeRange.after);
   const alignedBefore = alignEndDateToTimeline(timeRange.before);
 
-  const { data: motionData, isLoading } = useSWR<MotionData[]>([
-    "review/activity/motion",
-    {
-      before: alignedBefore,
-      after: alignedAfter,
-      scale: Math.round(zoomSettings.segmentDuration / 2),
-      cameras: mainCamera,
-    },
-  ]);
+  const { data: motionData, isLoading } = useSWR<MotionData[]>(
+    dataEnabled
+      ? [
+          "review/activity/motion",
+          {
+            before: alignedBefore,
+            after: alignedAfter,
+            scale: Math.round(zoomSettings.segmentDuration / 2),
+            cameras: mainCamera,
+          },
+        ]
+      : null,
+  );
 
-  const { data: noRecordings } = useSWR<RecordingSegment[]>([
-    "recordings/unavailable",
-    {
-      before: alignedBefore,
-      after: alignedAfter,
-      scale: Math.round(zoomSettings.segmentDuration),
-      cameras: mainCamera,
-    },
-  ]);
+  const { data: noRecordings } = useSWR<RecordingSegment[]>(
+    dataEnabled
+      ? [
+          "recordings/unavailable",
+          {
+            before: alignedBefore,
+            after: alignedAfter,
+            scale: Math.round(zoomSettings.segmentDuration),
+            cameras: mainCamera,
+          },
+        ]
+      : null,
+  );
 
   const [exportStart, setExportStartTime] = useState<number>(0);
   const [exportEnd, setExportEndTime] = useState<number>(0);

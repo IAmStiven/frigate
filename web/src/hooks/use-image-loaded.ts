@@ -13,7 +13,7 @@ const useImageLoaded = (): [
   };
 
   useEffect(() => {
-    if (ref.current && ref.current?.complete) {
+    if (ref.current && ref.current.complete && ref.current.naturalWidth > 0) {
       onLoad();
     }
   });

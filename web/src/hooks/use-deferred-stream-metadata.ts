@@ -4,7 +4,7 @@ import useSWR from "swr";
 import { LiveStreamMetadata } from "@/types/live";
 
 const FETCH_TIMEOUT_MS = 10000;
-const DEFER_DELAY_MS = 2000;
+const DEFER_DELAY_MS = 500;
 const emptyObject: Readonly<{ [key: string]: LiveStreamMetadata }> =
   Object.freeze({});
 
@@ -35,48 +35,39 @@ export default function useDeferredStreamMetadata(streamNames: string[]) {
   }, [fetchEnabled, streamNames]);
 
   const fetcher = useCallback(async (key: string) => {
-    // Extract stream names from key (remove prefix)
-    const names = key.replace("deferred-streams:", "").split(",");
+    const names = new Set(
+      key.replace("deferred-streams:", "").split(",").filter(Boolean),
+    );
+    const controller = new AbortController();
+    const timeoutId = setTimeout(() => controller.abort(), FETCH_TIMEOUT_MS);
 
-    const promises = names.map(async (streamName) => {
-      const controller = new AbortController();
-      const timeoutId = setTimeout(() => controller.abort(), FETCH_TIMEOUT_MS);
+    try {
+      const response = await fetch(`${baseUrl}api/go2rtc/streams`, {
+        priority: "low",
+        signal: controller.signal,
+      });
 
-      try {
-        const response = await fetch(
-          `${baseUrl}api/go2rtc/streams/${streamName}`,
-          {
-            priority: "low",
-            signal: controller.signal,
-          },
-        );
-        clearTimeout(timeoutId);
-
-        if (response.ok) {
-          const data = await response.json();
-          return { streamName, data };
-        }
-        return { streamName, data: null };
-      } catch (error) {
-        clearTimeout(timeoutId);
-        if ((error as Error).name !== "AbortError") {
-          // eslint-disable-next-line no-console
-          console.error(`Failed to fetch metadata for ${streamName}:`, error);
-        }
-        return { streamName, data: null };
+      if (!response.ok) {
+        return {};
       }
-    });
 
-    const results = await Promise.allSettled(promises);
+      const allMetadata = (await response.json()) as Record<
+        string,
+        LiveStreamMetadata
+      >;
 
-    const metadata: { [key: string]: LiveStreamMetadata } = {};
-    results.forEach((result) => {
-      if (result.status === "fulfilled" && result.value.data) {
-        metadata[result.value.streamName] = result.value.data;
+      return Object.fromEntries(
+        Object.entries(allMetadata).filter(([name]) => names.has(name)),
+      );
+    } catch (error) {
+      if ((error as Error).name !== "AbortError") {
+        // eslint-disable-next-line no-console
+        console.error("Failed to fetch stream metadata:", error);
       }
-    });
-
-    return metadata;
+      return {};
+    } finally {
+      clearTimeout(timeoutId);
+    }
   }, []);
 
   const { data: metadata = emptyObject } = useSWR<{

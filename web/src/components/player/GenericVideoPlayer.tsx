@@ -29,18 +29,27 @@ export function GenericVideoPlayer({
     useVideoDimensions(containerRef);
 
   useEffect(() => {
+    const controller = new AbortController();
+
     const checkSourceExists = async (url: string) => {
       try {
-        const response = await fetch(url, { method: "HEAD" });
+        const response = await fetch(url, {
+          method: "HEAD",
+          signal: controller.signal,
+        });
         // nginx vod module returns 502 for non existent media
         // https://github.com/kaltura/nginx-vod-module/issues/468
         setSourceExists(response.status !== 502 && response.status !== 404);
       } catch (error) {
-        setSourceExists(false);
+        if ((error as Error).name !== "AbortError") {
+          setSourceExists(false);
+        }
       }
     };
 
-    checkSourceExists(source);
+    void checkSourceExists(source);
+
+    return () => controller.abort();
   }, [source]);
 
   const onSeek = useCallback(

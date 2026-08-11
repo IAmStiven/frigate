@@ -15,21 +15,22 @@ import useSWR from "swr";
 import { FrigateConfig } from "./types/frigateConfig";
 import ActivityIndicator from "@/components/indicators/activity-indicator";
 import { isRedirectingToLogin } from "@/api/auth-redirect";
+import routeLoaders from "@/lib/routePreload";
 
-const Live = lazy(() => import("@/pages/Live"));
-const Events = lazy(() => import("@/pages/Events"));
-const Explore = lazy(() => import("@/pages/Explore"));
-const Exports = lazy(() => import("@/pages/Exports"));
-const ConfigEditor = lazy(() => import("@/pages/ConfigEditor"));
-const System = lazy(() => import("@/pages/System"));
-const Settings = lazy(() => import("@/pages/Settings"));
-const UIPlayground = lazy(() => import("@/pages/UIPlayground"));
-const FaceLibrary = lazy(() => import("@/pages/FaceLibrary"));
-const Classification = lazy(() => import("@/pages/ClassificationModel"));
-const Chat = lazy(() => import("@/pages/Chat"));
-const Logs = lazy(() => import("@/pages/Logs"));
-const AccessDenied = lazy(() => import("@/pages/AccessDenied"));
-const Replay = lazy(() => import("@/pages/Replay"));
+const Live = lazy(routeLoaders.live);
+const Events = lazy(routeLoaders.review);
+const Explore = lazy(routeLoaders.explore);
+const Exports = lazy(routeLoaders.export);
+const ConfigEditor = lazy(routeLoaders.config);
+const System = lazy(routeLoaders.system);
+const Settings = lazy(routeLoaders.settings);
+const UIPlayground = lazy(routeLoaders.playground);
+const FaceLibrary = lazy(routeLoaders.faces);
+const Classification = lazy(routeLoaders.classification);
+const Chat = lazy(routeLoaders.chat);
+const Logs = lazy(routeLoaders.logs);
+const AccessDenied = lazy(routeLoaders.unauthorized);
+const Replay = lazy(routeLoaders.replay);
 
 function App() {
   const { data: config } = useSWR<FrigateConfig>("config", {

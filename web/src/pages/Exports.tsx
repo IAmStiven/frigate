@@ -70,6 +70,7 @@ import useSWR from "swr";
 import ExportActionGroup from "@/components/filter/ExportActionGroup";
 import ExportFilterGroup from "@/components/filter/ExportFilterGroup";
 import { useIsAdmin } from "@/hooks/use-is-admin";
+import { TransformComponent, TransformWrapper } from "react-zoom-pan-pinch";
 
 // always parse these as string arrays
 const EXPORT_FILTER_ARRAY_KEYS = ["cameras"];
@@ -683,27 +684,38 @@ function Exports() {
           <DialogTitle className="smart-capitalize">
             {selected?.name?.replaceAll("_", " ")}
           </DialogTitle>
-          <video
-            className={cn(
-              "size-full rounded-lg md:rounded-2xl",
-              selectedAspect < 1.5 && "aspect-video h-full",
-            )}
-            playsInline
-            preload="auto"
-            autoPlay
-            controls
-            muted
-            onLoadedData={(e) =>
-              setSelectedAspect(
-                e.currentTarget.videoWidth / e.currentTarget.videoHeight,
-              )
-            }
+          <TransformWrapper
+            key={selected?.id}
+            minScale={1}
+            wheel={{ smoothStep: 0.005 }}
           >
-            <source
-              src={`${baseUrl}${selected?.video_path?.replace("/media/frigate/", "")}`}
-              type="video/mp4"
-            />
-          </video>
+            <TransformComponent
+              wrapperStyle={{ width: "100%" }}
+              contentStyle={{ width: "100%" }}
+            >
+              <video
+                className={cn(
+                  "size-full rounded-lg md:rounded-2xl",
+                  selectedAspect < 1.5 && "aspect-video h-full",
+                )}
+                playsInline
+                preload="metadata"
+                autoPlay
+                controls
+                muted
+                onLoadedData={(e) =>
+                  setSelectedAspect(
+                    e.currentTarget.videoWidth / e.currentTarget.videoHeight,
+                  )
+                }
+              >
+                <source
+                  src={`${baseUrl}${selected?.video_path?.replace("/media/frigate/", "")}`}
+                  type="video/mp4"
+                />
+              </video>
+            </TransformComponent>
+          </TransformWrapper>
         </DialogContent>
       </Dialog>
 

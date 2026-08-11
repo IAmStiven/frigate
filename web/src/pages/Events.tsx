@@ -489,7 +489,7 @@ export default function Events() {
   // recordings summary
 
   const { data: recordingsSummary } = useSWR<RecordingsSummary>(
-    timezone
+    timezone && !recording
       ? [
           "recordings/summary",
           {

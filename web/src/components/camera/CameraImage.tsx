@@ -52,19 +52,15 @@ export default function CameraImage({
     setIsPortraitImage(false);
   }, [camera]);
 
-  useEffect(() => {
-    if (!config || !imgRef.current) {
-      return;
+  const src = useMemo(() => {
+    if (!config) {
+      return undefined;
     }
 
-    const newSrc = `${apiHost}api/${name}/latest.webp?height=${requestHeight}${
+    return `${apiHost}api/${name}/latest.webp?height=${requestHeight}${
       searchParams ? `&${searchParams}` : ""
     }`;
-
-    if (imgRef.current.src !== newSrc) {
-      imgRef.current.src = newSrc;
-    }
-  }, [apiHost, name, searchParams, requestHeight, config, camera]);
+  }, [apiHost, name, searchParams, requestHeight, config]);
 
   const handleImageLoad = () => {
     if (imgRef.current && containerWidth && containerHeight) {
@@ -86,6 +82,7 @@ export default function CameraImage({
       {enabled ? (
         <img
           ref={imgRef}
+          src={src}
           className={cn(
             "object-contain",
             imageLoaded
